@@ -1,6 +1,4 @@
-using System.Security.AccessControl;
 using System.Security.Cryptography;
-using System.Security.Principal;
 using System.Text;
 using Microsoft.Extensions.Primitives;
 
@@ -39,7 +37,7 @@ public sealed class LocalAccessToken
         if (!File.Exists(path))
         {
             var created = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(TokenBytes));
-            WriteOwnerOnlyAtomically(path, created);
+            SecureFile.WriteOwnerOnly(path, created, overwrite: false);
             return new LocalAccessToken(created);
         }
 
@@ -52,47 +50,5 @@ public sealed class LocalAccessToken
         }
 
         return new LocalAccessToken(existing);
-    }
-
-    private static void WriteOwnerOnlyAtomically(string path, string value)
-    {
-        var directory = Path.GetDirectoryName(path)!;
-        Directory.CreateDirectory(directory);
-        var temp = Path.Combine(directory, $".{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
-        try
-        {
-            using (var stream = CreateOwnerOnly(temp))
-            {
-                stream.Write(Encoding.ASCII.GetBytes(value));
-                stream.Flush(flushToDisk: true);
-            }
-
-            File.Move(temp, path, overwrite: false);
-        }
-        finally
-        {
-            File.Delete(temp);
-        }
-    }
-
-    private static FileStream CreateOwnerOnly(string path)
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            var user = WindowsIdentity.GetCurrent().User
-                ?? throw new InvalidOperationException("The current Windows user could not be determined.");
-            var security = new FileSecurity();
-            security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
-            security.AddAccessRule(new FileSystemAccessRule(user, FileSystemRights.FullControl, AccessControlType.Allow));
-            return new FileInfo(path).Create(
-                FileMode.CreateNew, FileSystemRights.FullControl, FileShare.None, 4096, FileOptions.None, security);
-        }
-
-        return new FileStream(path, new FileStreamOptions
-        {
-            Mode = FileMode.CreateNew,
-            Access = FileAccess.Write,
-            UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite,
-        });
     }
 }

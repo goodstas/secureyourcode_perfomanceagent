@@ -1,0 +1,8 @@
+{
+  "tasks": [{
+    "name": "graph-refresh",
+    "group": "post-commit",
+    "command": "powershell",
+    "args": ["-NoProfile", "-NonInteractive", "-Command", "try { $t = (Get-Content -Raw .husky/.local-token).Trim(); Invoke-WebRequest -Uri http://127.0.0.1:9876/git-post-commit -Method Post -Headers @{ 'X-SecureYourCode-Token' = $t } -TimeoutSec 2 -UseBasicParsing | Out-Null } catch { }; exit 0"]
+  }]
+}

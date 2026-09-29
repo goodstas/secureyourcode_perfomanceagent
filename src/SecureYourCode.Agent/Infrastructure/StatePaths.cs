@@ -27,7 +27,21 @@ public sealed class StatePaths
         ? Path.Combine(StateRoot, "graphify-venv", "Scripts", "python.exe")
         : Path.Combine(StateRoot, "graphify-venv", "bin", "python");
 
+    public string GraphifyCli => OperatingSystem.IsWindows()
+        ? Path.Combine(StateRoot, "graphify-venv", "Scripts", "graphify.exe")
+        : Path.Combine(StateRoot, "graphify-venv", "bin", "graphify");
+
+    /// <summary>Published graphs, temp extraction folders and current.txt (plan §4.1).</summary>
+    public string GraphsDirectory => Path.Combine(StateRoot, "graphs");
+
+    /// <summary>Per-run artifacts such as analysis.sarif (plan §4.4).</summary>
+    public string RunsDirectory => Path.Combine(StateRoot, "runs");
+
+    public string DemoProject => Path.Combine(RepoPath, "DemoShop.csproj");
+
     public string DemoShopSource => Path.Combine(AppWorkspace, "test-assets", "demo-shop");
+
+    public string HookTemplatesDirectory => Path.Combine(AppWorkspace, "hook-templates");
 
     /// <summary>The Release build of the SecureYourCode analyzer that the demo repo references (plan §4.3).</summary>
     public string AnalyzerAssembly => Path.Combine(

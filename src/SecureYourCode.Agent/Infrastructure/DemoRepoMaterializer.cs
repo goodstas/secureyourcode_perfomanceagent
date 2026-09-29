@@ -20,12 +20,7 @@ public sealed class DemoRepoMaterializer(StatePaths paths, ILogger<DemoRepoMater
 
         """;
 
-    private static readonly TimeSpan GitTimeout = TimeSpan.FromMinutes(1);
     private static readonly HashSet<string> SkippedDirectories = new(StringComparer.OrdinalIgnoreCase) { "bin", "obj", ".vs" };
-
-    // App-owned local repo: a fixed identity, so commits do not depend on each developer's git configuration.
-    private static readonly string[] AppIdentity =
-        ["-c", "user.name=SecureYourCode", "-c", "user.email=secureyourcode@localhost", "-c", "commit.gpgsign=false"];
 
     private static readonly Regex AnalyzerItem =
         new("""<Analyzer\s+Include="[^"]*SecureYourCode\.PerformanceAnalyzer\.dll"\s*/>""", RegexOptions.Compiled);
@@ -56,9 +51,9 @@ public sealed class DemoRepoMaterializer(StatePaths paths, ILogger<DemoRepoMater
             CopyDirectory(paths.DemoShopSource, temp);
             await File.WriteAllTextAsync(Path.Combine(temp, ".gitignore"), GitIgnore, cancellationToken);
 
-            await GitAsync(temp, cancellationToken, "init", "--quiet", "--initial-branch=main");
-            await GitAsync(temp, cancellationToken, "add", "--all");
-            await GitAsync(temp, cancellationToken, [.. AppIdentity, "commit", "--quiet", "--message", "Initial demo shop"]);
+            await Git.RunAsync(temp, cancellationToken, "init", "--quiet", "--initial-branch=main");
+            await Git.RunAsync(temp, cancellationToken, "add", "--all");
+            await Git.CommitAsync(temp, "Initial demo shop", cancellationToken);
 
             Directory.Move(temp, repoPath);
         }
@@ -85,7 +80,7 @@ public sealed class DemoRepoMaterializer(StatePaths paths, ILogger<DemoRepoMater
                 "Build it with 'dotnet build src/SecureYourCode.PerformanceAnalyzer -c Release' (tools/setup.py does this).");
         }
 
-        var project = Path.Combine(paths.RepoPath, "DemoShop.csproj");
+        var project = paths.DemoProject;
         var text = await File.ReadAllTextAsync(project, cancellationToken);
         var item = $"<Analyzer Include=\"{SecurityElement.Escape(analyzer)}\" />";
         if (text.Contains(item, StringComparison.Ordinal))
@@ -112,19 +107,9 @@ public sealed class DemoRepoMaterializer(StatePaths paths, ILogger<DemoRepoMater
         }
 
         await File.WriteAllTextAsync(project, updated, cancellationToken);
-        await GitAsync(paths.RepoPath, cancellationToken, "add", "DemoShop.csproj");
-        await GitAsync(paths.RepoPath, cancellationToken, [.. AppIdentity, "commit", "--quiet", "--message", "Reference the SecureYourCode analyzer"]);
+        await Git.RunAsync(paths.RepoPath, cancellationToken, "add", "DemoShop.csproj");
+        await Git.CommitAsync(paths.RepoPath, "Reference the SecureYourCode analyzer", cancellationToken);
         logger.LogInformation("Demo repository now references the analyzer at {Analyzer} (committed)", analyzer);
-    }
-
-    private static async Task GitAsync(string workingDirectory, CancellationToken cancellationToken, params string[] arguments)
-    {
-        var result = await ProcessRunner.RunAsync("git", arguments, workingDirectory, GitTimeout, cancellationToken);
-        if (result.ExitCode != 0)
-        {
-            throw new InvalidOperationException(
-                $"git {string.Join(' ', arguments)} failed with exit code {result.ExitCode}: {result.StandardError.Trim()}");
-        }
     }
 
     private static void CopyDirectory(string source, string destination)

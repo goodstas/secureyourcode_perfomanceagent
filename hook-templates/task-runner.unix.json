@@ -1,0 +1,8 @@
+{
+  "tasks": [{
+    "name": "graph-refresh",
+    "group": "post-commit",
+    "command": "sh",
+    "args": ["-c", "curl -s -f --connect-timeout 1 --max-time 2 -H \"X-SecureYourCode-Token: $(cat .husky/.local-token 2>/dev/null)\" -X POST http://127.0.0.1:9876/git-post-commit || true"]
+  }]
+}

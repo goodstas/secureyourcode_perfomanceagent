@@ -207,6 +207,55 @@ The host's startup now calls `DemoRepoMaterializer.EnsureAnalyzerReferenceAsync`
 
 The plan's command `"/p:ErrorLog=<path>,version=2"` produces **SARIF 1.0.0**. MSBuild splits `/p:` values on `,`, so `version=2` becomes a separate, ignored property. Escaping the comma, `/p:ErrorLog=<path>%2Cversion=2`, produces **SARIF 2.1.0**, which H3 must use. Observed 2.1.0 output: `runs[].results[].locations[0].physicalLocation.artifactLocation.uri` is an absolute `file:///` URI with no `uriBaseId` and no `originalUriBaseIds`; `region.startLine`/`endLine` present.
 
+## H3 — Static analysis + graph (2026-09-29)
+
+**No fallback needed:** the hook works on the detected OS (Windows); the Unix template is maintained but not exercised on this machine.
+
+### Decisions
+
+- **Fingerprint** (`Graph/RepoFingerprint.cs`): `git ls-files -z -c -o --exclude-standard`, minus `.husky/.local-token`, sorted ordinally. Each file contributes `"<path>\0<sha256(content)>\n"` to one SHA-256 (lowercase hex). A tracked file deleted from the working tree contributes `<deleted>`, so deletions change the fingerprint too. `RepoState` reads the commit SHA and dirty flag for report provenance.
+- **`GraphifyUpdater`** (`Graph/GraphifyUpdater.cs`) implements plan §4.2 as written, behind a DI-singleton `SemaphoreSlim(1,1)`, with a 5-minute timeout.
+  - `graphifyVersion` is read from the venv (`importlib.metadata.version('graphifyy')`), not hard-coded.
+  - Published folders are `<StateRoot>/graphs/<fingerprint>-<version>/`; `current.txt` holds that folder name and is updated by temp file + rename.
+  - Failure reasons: `source_changed_during_graph_build`, `invalid_graph_output`, `extraction_failed: …`. The temp folder is always deleted, and nothing is published.
+  - `TryGetPublishedAsync(fingerprint)` and `ReadCurrent()` give H4 the `current`/`stale`/`none` graph status. The extractor sits behind `IGraphExtractor` (`GraphifyCliExtractor` runs `graphify extract <RepoPath> --code-only --no-cluster --out <temp>`), so the before/after logic is unit-tested with a fake.
+- **Refresh queue:** `GraphRefreshQueue` wraps the plan's DI-singleton `Channel<bool>` (capacity 1, `DropWrite`). `GraphRefreshWorker` (a `BackgroundService`) runs `RefreshAsync` for each item. The host also queues one refresh at startup.
+- **`POST /git-post-commit`:** a token check (`401` otherwise), then a queued refresh and `202 Accepted`, immediately.
+- **`EnsureHookInstalled()`** (`Graph/GitHookInstaller.cs`) runs at every start, after the analyzer reference. It checks and repairs:
+  - `.config/dotnet-tools.json` with `husky` 0.9.1;
+  - `core.hooksPath = .husky` plus `.husky/_/husky.sh` (via `dotnet tool restore` + `dotnet husky install`);
+  - `.husky/post-commit` (from `hook-templates/post-commit`);
+  - `.husky/task-runner.json` (the OS template);
+  - `.husky/.local-token` (the host token, owner-only).
+
+  Then `git add .husky .config .gitignore`, and it commits only if something is staged. A file merely missing from the working tree is restored to its committed content, so there is nothing to commit; wrong *committed* content is repaired and committed ("Add SecureYourCode graph-refresh hook").
+  - **.NET 10 difference:** `dotnet new tool-manifest` now writes `dotnet-tools.json` at the repository root, so the installer passes `--output .config` to keep the plan's `.config/dotnet-tools.json`.
+  - **Line endings:** the post-commit script is always written with LF line endings (a CRLF checkout would break `sh`), and chmod 755 on Unix.
+- **Deviation from the plan's Windows task template:** `hook-templates/task-runner.windows.json` appends `; exit 0` after the `try { … } catch { }`. Verified: with the plan's literal command, Windows PowerShell 5.1 exits with code 1 after the caught connection failure, and Husky prints "task failed … post-commit hook exited with code 1 (error)" on every commit while the host is stopped. That violates "never … errors a commit". The Unix template already ends in `|| true`.
+- **Static analysis** (`StaticAnalysis/StaticAnalysisRunner.cs`) runs `dotnet build <DemoShop.csproj> -t:Rebuild /p:ErrorLog=<runs/<runId>/analysis.sarif>%2Cversion=2 /p:UseSharedCompilation=false -nodeReuse:false -nologo` with a 5-minute timeout.
+  - The last two build switches stop compiler-server or MSBuild node processes from outliving the run or keeping the analyzer DLL locked.
+  - The fingerprint is checked before the build and after the SARIF. Precedence follows plan §4.7: a failed build or missing SARIF → `Failed`; otherwise a changed fingerprint → `SourceChanged` (no candidates; `analysis.sarif.validity.json` records `validForEvidence: false, reason: source_changed_during_static_analysis`); otherwise the SARIF is parsed.
+  - An unresolvable `PERF*` location → `Failed` with `sarif_data_error: <uri>`.
+- **SARIF parsing** (`StaticAnalysis/SarifParser.cs`): 2.1.0 only (anything else is a data error); keeps `PERF*` results only; `endLine ?? startLine`. `NormalizeSarifPath` follows the four plan steps: decode `file://`/percent-encoding; resolve a relative path against its `uriBaseId` in `originalUriBaseIds`, else the project folder, accepting `\` separators; `GetFullPath` and require the result inside RepoPath; return it repo-relative with `/`.
+- **Enclosing symbol** (`StaticAnalysis/EnclosingSymbolResolver.cs`): the innermost method, constructor, destructor, operator, property, indexer, event, accessor or local function whose line span contains the line, as `Type.Nested.Member`. Naming rules:
+  - An accessor reports its property's name, a constructor its type name, a local function its own name.
+  - With no member, the innermost type; code outside any type (top-level statements) resolves to `Program`.
+- **Candidate model** (`Orchestration/Candidate.cs`): `candidateId` = first 12 hex of SHA-256(`ruleId|file|enclosingSymbol|startLine`); host-owned `category` from the rule ID; baseline candidates are `origin: roslyn`, `confidence: candidate`, `evidence: E1`. They also carry the analyzer's message as a host-owned `DiagnosticMessage`.
+- **New test project `src/SecureYourCode.Agent.Tests`** (not in the plan's §3 layout). The start prompt requires deterministic tests for source binding and related logic that run without credentials; this project holds them.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| All tests | **63/63 pass** (20 analyzer, 43 host); the host tests leave no temp folders behind |
+| Host unit tests | SARIF: `PERF*`-only filtering, `endLine` fallback, percent-encoding, `uriBaseId` and project-dir resolution, backslashes, outside-repo and `..` paths as data errors, SARIF 1.0 rejected. Enclosing symbol: constructor, accessor, method, local function, nested type, field → type, top-level → `Program`. Candidate ID and category mapping. Graph predicate (6 shapes). Fingerprint: stable, ignores `bin/` and the token, changes on edit, new untracked file and deletion. `GraphifyUpdater` (fake extractor): publish + `current.txt` + reuse without re-extraction; source change mid-extraction, invalid JSON, empty output, empty `nodes` and extractor crash all leave nothing published and no temp folder; four concurrent refreshes → one extraction, never overlapping |
+| Host integration tests (real tools, no credentials) | Real build: exactly 4 baseline candidates, `OrderSummaryService.BuildSummariesAsync` (P1, line 17), `InvoiceService.BuildInvoiceLinesAsync` (P5, 19), `NotificationService.NotifyAllAsync` (P2, 13), `ReportCache.GetOrAdd` (P3, 28), with the right categories, all `roslyn`/`candidate`/`E1`, and the fingerprint unchanged by the build. Wrong `analysisFingerprint` → `SourceChanged`, no candidates. Broken source → `Failed` (`build_failed`), not zero findings. Real Graphify extraction → a valid published graph, RepoPath byte-identical. Hook: install → one commit, clean tree, repo-local `core.hooksPath`; idempotent; deleted files restored; wrong committed content repaired and committed |
+| Real demo repo, first start | Hook installed and committed; startup refresh published a graph; `current.txt` updated |
+| `POST /git-post-commit` | no token → 401, wrong token → 401, valid token → 202 |
+| **A commit produces a new published graph** | Commit with the host running: hook ran in about 0.2 s, and a new graph was published for the new fingerprint. Committing the removal switched `current.txt` back to the existing graph with no re-extraction. No temp folders left; demo content unchanged |
+| **A stopped host doesn't break commits** | Commit with the host stopped: hook task "successfully executed" in about 2.2 s, commit exit 0, no error output (after the `exit 0` template fix) |
+| Restart | Hook check is idempotent (no commit); startup refresh reused the existing graph |
+
 ## Pre-implementation environment checks (2026-09-29)
 
 Verified on one Windows x64 developer machine, and again with `tools/setup.py` against a fresh, empty `StateRoot` (simulating a new developer). These are smoke checks; they do not replace the formal H1 probe.

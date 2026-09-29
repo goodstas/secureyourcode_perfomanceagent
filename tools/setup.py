@@ -116,10 +116,11 @@ def setup_copilot_cli(root: Path) -> None:
 def build_and_test() -> None:
     step("Build and test the solution")
     dotnet = tool("dotnet")
+    # The demo repo references the Release analyzer build: the host refuses to start without it, and the host's
+    # integration tests build the demo project with it. So build it before the tests.
+    check([dotnet, "build", REPO / "src" / "SecureYourCode.PerformanceAnalyzer", "-c", "Release"])
     check([dotnet, "build", REPO / "SecureYourCode.slnx"])
     check([dotnet, "test", REPO / "SecureYourCode.slnx", "--no-build"])
-    # The demo repo references the Release analyzer build; the host refuses to start without it.
-    check([dotnet, "build", REPO / "src" / "SecureYourCode.PerformanceAnalyzer", "-c", "Release"])
     check([dotnet, "build", REPO / "tools" / "copilot-smoke"])
 
 
