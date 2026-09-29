@@ -47,11 +47,23 @@ public sealed class Candidate
 
     public string? CriticRationale { get; set; }
 
-    public VerificationResult Verification { get; set; } = VerificationResult.NotRun("verification stage not implemented yet (H5)");
+    public VerificationResult Verification { get; set; } = VerificationResult.NotRun("no host benchmark template applies to this candidate");
 }
 
-/// <summary>The outcome of host-owned benchmark verification for one candidate (plan §4.6).</summary>
-public sealed record VerificationResult(string Status, string? Template, string Reason)
+/// <summary>One per-n benchmark observation.</summary>
+public sealed record BenchmarkObservation(int N, double Value);
+
+/// <summary>
+/// The outcome of host-owned benchmark verification for one candidate (plan §4.6). Status: not_run, skipped, failed
+/// (verification infrastructure), not_verified (ran; acceptance rule not met or result discarded), verified (E2),
+/// invalidated (E2 reverted because the source changed during the run).
+/// </summary>
+public sealed record VerificationResult(
+    string Status,
+    string? Template,
+    string Reason,
+    IReadOnlyList<BenchmarkObservation>? Observations = null,
+    string? PreviousEvidence = null)
 {
     public static VerificationResult NotRun(string reason) => new("not_run", null, reason);
 }

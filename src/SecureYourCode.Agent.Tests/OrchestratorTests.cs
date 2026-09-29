@@ -4,6 +4,7 @@ using SecureYourCode.Agent.Graph;
 using SecureYourCode.Agent.Orchestration;
 using SecureYourCode.Agent.Reporting;
 using SecureYourCode.Agent.StaticAnalysis;
+using SecureYourCode.Agent.Verification;
 
 namespace SecureYourCode.Agent.Tests;
 
@@ -58,15 +59,16 @@ public class OrchestratorTests
         FakeReviewerClient Client, List<Report> Published);
 
     private static Harness Create(TestEnvironment env, FakeReviewerClient client, string[]? fingerprints = null,
-        Func<StaticAnalysisResult>? analysis = null, OrchestrationTimeouts? timeouts = null, string graphStatus = GraphStatuses.Current)
+        Func<StaticAnalysisResult>? analysis = null, OrchestrationTimeouts? timeouts = null, string graphStatus = GraphStatuses.Current,
+        IVerificationStage? verifier = null)
     {
         var repository = new FakeRepository(fingerprints ?? ["fp1"]);
         var staticAnalysis = new FakeStaticAnalysis(analysis ?? Baseline);
         var published = new List<Report>();
         var graph = graphStatus == GraphStatuses.None ? null : new PublishedGraph("fp1", "0.9.71", "g", "g/graph.json");
         var orchestrator = new Orchestrator(repository, new FakeGraphs(graphStatus, graph), staticAnalysis, new FakeClientFactory(client),
-            new RecordingPublisher(published), env.Paths, timeouts ?? OrchestrationTimeouts.Default, TimeProvider.System,
-            NullLogger<Orchestrator>.Instance);
+            verifier ?? new FakeVerifier(), new RecordingPublisher(published), env.Paths, timeouts ?? OrchestrationTimeouts.Default,
+            TimeProvider.System, NullLogger<Orchestrator>.Instance);
         return new Harness(orchestrator, repository, staticAnalysis, client, published);
     }
 
@@ -282,6 +284,45 @@ public class OrchestratorTests
     }
 
     [Fact]
+    public async Task VerificationAwardsE2_AndAFinalSourceChangeRevertsIt()
+    {
+        using var env = await new TestEnvironment().WithDemoRepoAsync();
+        var verified = await Create(env, HappyClient(), verifier: new FakeVerifier(awardE2To: P1)).Orchestrator.RunAsync(CancellationToken.None);
+        Assert.Equal((RunStatuses.Complete, EvidenceLevels.E2, "verified"),
+            (verified.Run.Status, verified.Findings.Single(f => f.CandidateId == P1).Evidence, verified.Findings.Single(f => f.CandidateId == P1).Verification.Status));
+
+        // Fingerprint calls: step 1, step 3, step 6 (the fake verifier does not read it).
+        var reverted = await Create(env, HappyClient(), fingerprints: ["fp1", "fp1", "fp2"], verifier: new FakeVerifier(awardE2To: P1))
+            .Orchestrator.RunAsync(CancellationToken.None);
+        var p1 = reverted.Findings.Single(f => f.CandidateId == P1);
+        Assert.Equal((RunStatuses.Partial, "source_changed"), (reverted.Run.Status, reverted.Run.Reason));
+        Assert.Equal((EvidenceLevels.E1, "invalidated", "verification invalidated: source changed during run"),
+            (p1.Evidence, p1.Verification.Status, p1.Verification.Reason));
+    }
+
+    [Fact]
+    public async Task VerificationInfrastructureFailure_IsPartial()
+    {
+        using var env = await new TestEnvironment().WithDemoRepoAsync();
+        var report = await Create(env, HappyClient(), verifier: new FakeVerifier(infrastructureFailure: "template build failed"))
+            .Orchestrator.RunAsync(CancellationToken.None);
+        Assert.Equal((RunStatuses.Partial, "verification_failed: template build failed"), (report.Run.Status, report.Run.Reason));
+    }
+
+    [Fact]
+    public async Task RunStoppedDuringVerification_IsPartial_AndUnconfirmedE2IsReverted()
+    {
+        using var env = await new TestEnvironment().WithDemoRepoAsync();
+        var report = await Create(env, HappyClient(), timeouts: new OrchestrationTimeouts(TimeSpan.FromSeconds(2), TimeSpan.FromMinutes(1)),
+            verifier: new FakeVerifier(awardE2To: P1, hang: true)).Orchestrator.RunAsync(CancellationToken.None);
+
+        Assert.Equal((RunStatuses.Partial, "verification_failed: timeout"), (report.Run.Status, report.Run.Reason));
+        var p1 = report.Findings.Single(f => f.CandidateId == P1);
+        Assert.Equal((EvidenceLevels.E1, "invalidated"), (p1.Evidence, p1.Verification.Status));
+        Assert.StartsWith("verification not confirmed", p1.Verification.Reason);
+    }
+
+    [Fact]
     public async Task GateAllowsOneRunAtATime()
     {
         using var env = await new TestEnvironment().WithDemoRepoAsync();
@@ -317,6 +358,29 @@ public class OrchestratorTests
         {
             Calls++;
             return Task.FromResult(result());
+        }
+    }
+
+    /// <summary>Optionally awards E2 to one candidate (then hangs, to simulate a stop during verification) or reports a failure.</summary>
+    private sealed class FakeVerifier(string? awardE2To = null, string? infrastructureFailure = null, bool hang = false) : IVerificationStage
+    {
+        public async Task<VerificationSummary> VerifyAsync(IReadOnlyList<Candidate> candidates,
+            IReadOnlyList<(BenchmarkProposal Proposal, BenchmarkTemplate Template)> acceptedProposals,
+            string analysisFingerprint, string runDirectory, CancellationToken cancellationToken)
+        {
+            if (candidates.FirstOrDefault(c => c.CandidateId == awardE2To) is { } candidate)
+            {
+                candidate.Verification = new VerificationResult("verified", "RepositoryCallAmplification/OrderCustomerLookup", "verified", PreviousEvidence: candidate.Evidence);
+                candidate.Evidence = EvidenceLevels.E2;
+            }
+
+            if (hang)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(60), cancellationToken);
+            }
+
+            var summary = new VerificationSummary { InfrastructureFailure = infrastructureFailure };
+            return summary;
         }
     }
 

@@ -15,6 +15,13 @@
     <None Include="Prompts\*.md" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- Benchmark templates reference the demo project and are built per run under StateRoot, never as part of the host. -->
+  <ItemGroup>
+    <Compile Remove="Verification\Templates\**" />
+    <None Remove="Verification\Templates\**" />
+    <Content Remove="Verification\Templates\**" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="GitHub.Copilot.SDK" Version="1.0.15" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.0.0" />

@@ -3,6 +3,7 @@ using SecureYourCode.Agent.Graph;
 using SecureYourCode.Agent.Infrastructure;
 using SecureYourCode.Agent.Reporting;
 using SecureYourCode.Agent.StaticAnalysis;
+using SecureYourCode.Agent.Verification;
 
 namespace SecureYourCode.Agent.Orchestration;
 
@@ -24,6 +25,7 @@ public sealed class Orchestrator(
     IGraphSelector graphs,
     IStaticAnalysis staticAnalysis,
     IReviewerClientFactory reviewers,
+    IVerificationStage verifier,
     IReportPublisher publisher,
     StatePaths paths,
     OrchestrationTimeouts timeouts,
@@ -172,14 +174,34 @@ public sealed class Orchestrator(
 
         foreach (var (proposal, template) in outcome.AcceptedBenchmarks)
         {
-            report.Notes.Add($"Benchmark proposal accepted: {template.Kind}/{template.Scenario} for {proposal.CandidateId} (host verification runs from H5).");
+            report.Notes.Add($"Benchmark proposal accepted: {template.Label} for {proposal.CandidateId}.");
         }
 
-        // 6. Final source check (from H5 on, this also reverts any E2 awarded in this run).
+        // Required seam benchmarks + accepted proposals → host evidence assignment (E2).
+        var verification = await verifier.VerifyAsync(run.Candidates, outcome.AcceptedBenchmarks, fingerprint, runDirectory, ct);
+        report.Notes.AddRange(verification.Notes);
+        if (verification.InfrastructureFailure is { } verificationFailure)
+        {
+            run.Facts.VerificationInfrastructureFailure = verificationFailure;
+        }
+
+        // 6. Final source check: if the source changed, every E2 awarded in this run is reverted.
         if (await repository.ComputeFingerprintAsync(ct) != fingerprint)
         {
             run.Facts.SourceChanged = true;
+            RevertE2(run, "verification invalidated: source changed during run");
             report.Notes.Add("The source changed during the run.");
+        }
+    }
+
+    /// <summary>Reverts every E2 awarded in this run to its previous level (E1 for Roslyn, E0 for specialist findings).</summary>
+    private static void RevertE2(RunState run, string reason)
+    {
+        foreach (var candidate in run.Candidates.Where(c => c.Evidence == EvidenceLevels.E2))
+        {
+            candidate.Evidence = candidate.Verification.PreviousEvidence
+                ?? (candidate.Origin == Origins.Roslyn ? EvidenceLevels.E1 : EvidenceLevels.E0);
+            candidate.Verification = candidate.Verification with { Status = "invalidated", Reason = reason };
         }
     }
 
@@ -282,6 +304,9 @@ public sealed class Orchestrator(
         {
             run.Facts.VerificationInfrastructureFailure = reason;
         }
+
+        // The final source check never ran, so no E2 from this run can be confirmed.
+        RevertE2(run, $"verification not confirmed: the run was stopped ({reason}) before the final source check");
 
         foreach (var summary in run.Report.Reviewers.Where(r => r.Status == "not_run"))
         {

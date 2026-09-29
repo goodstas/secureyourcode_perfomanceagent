@@ -37,6 +37,12 @@ public sealed class StatePaths
     /// <summary>Per-run artifacts such as analysis.sarif (plan §4.4).</summary>
     public string RunsDirectory => Path.Combine(StateRoot, "runs");
 
+    /// <summary>Per-run copies of the benchmark templates (plan §4.6).</summary>
+    public string VerificationDirectory => Path.Combine(StateRoot, "verification");
+
+    /// <summary>The host-owned benchmark templates in AppWorkspace (reviewed code, never model-written).</summary>
+    public string VerificationTemplatesDirectory => Path.Combine(AppWorkspace, "src", "SecureYourCode.Agent", "Verification", "Templates");
+
     public string DemoProject => Path.Combine(RepoPath, "DemoShop.csproj");
 
     public string DemoShopSource => Path.Combine(AppWorkspace, "test-assets", "demo-shop");

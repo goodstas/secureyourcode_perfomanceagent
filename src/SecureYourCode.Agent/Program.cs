@@ -2,6 +2,7 @@ using SecureYourCode.Agent.Graph;
 using SecureYourCode.Agent.Infrastructure;
 using SecureYourCode.Agent.Orchestration;
 using SecureYourCode.Agent.StaticAnalysis;
+using SecureYourCode.Agent.Verification;
 
 // Content root = the binaries' folder, so appsettings.json (and its 127.0.0.1:9876 binding) loads from any working directory.
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
@@ -29,6 +30,8 @@ builder.Services.AddSingleton<IRepositorySnapshot, RepositorySnapshot>();
 builder.Services.AddSingleton<IGraphSelector, GraphSelector>();
 builder.Services.AddSingleton<PromptLibrary>(_ => new PromptLibrary());
 builder.Services.AddSingleton<IReviewerClientFactory, CopilotReviewerClientFactory>();
+builder.Services.AddSingleton<IBenchmarkRunner, DotnetBenchmarkRunner>();
+builder.Services.AddSingleton<IVerificationStage, BenchmarkVerifier>();
 builder.Services.AddSingleton<IReportPublisher, PendingReportPublisher>();
 builder.Services.AddSingleton(OrchestrationTimeouts.Default);
 builder.Services.AddSingleton(TimeProvider.System);

@@ -303,6 +303,46 @@ The plan's command `"/p:ErrorLog=<path>,version=2"` produces **SARIF 1.0.0**. MS
 
 Model output varies between runs (one run had an extra CPU-framed duplicate of P4). H7 records precision and recall from one `complete` run, as the plan says.
 
+## H5 — Verification (2026-09-29)
+
+### Decisions
+
+- **Templates** live in `src/SecureYourCode.Agent/Verification/Templates/<Kind>/` (`<Kind>.csproj` + `Program.cs`). They are ordinary reviewed console apps, excluded from the host's compilation (`Compile/None/Content Remove`). Each parses `--n <n>` and prints exactly one JSON line via `System.Text.Json`:
+  - `RepositoryCallAmplification` builds n orders with distinct customers, calls `OrderSummaryService.BuildSummariesAsync`, and prints `CountingCustomerRepository.CallCount` (metric `repository calls`).
+  - `CollectionGrowth` calls `ReportCache.GetOrAdd` with n distinct keys, forces a full GC, and prints `ReportCache.Count` (metric `entries retained`). Demo code gets no reset method.
+  - `TaskFanOut` calls `NotificationService.NotifyAllAsync` with n recipients and prints `CountingSender.StartedCount` **read as soon as the call returns, before awaiting** (metric `tasks started`). It therefore counts sends in flight at once: a sequential batched version would show about 20, not n.
+- **Runner** (`DotnetBenchmarkRunner`):
+  1. Copies the template to `<StateRoot>/verification/<runId>/<candidateId>/` and replaces `__DEMO_PROJECT__` with the XML-escaped absolute path of the demo project.
+  2. Runs `dotnet build -c Release -nologo /p:UseSharedCompilation=false -nodeReuse:false`.
+  3. Runs `dotnet bin/Release/net10.0/<Kind>.dll --n <n>` for n = 10, 100 and 1000, **each a fresh process**.
+
+  Building the reference writes only the demo repo's gitignored `bin/obj`.
+- **Verifier** (`BenchmarkVerifier`, the only code that assigns E2).
+  - **Plan:** the required template for every candidate whose rule and `TypeName.MemberName` match the template's rule and seam and whose critic decision is not `remove` (independent of proposals); plus accepted proposals, already limited to kept candidates at the seam. The same (candidate, template) pair never runs twice.
+  - **Status per candidate:** `rejected by the critic`, `not_run` (no template applies), `skipped` (`source_changed_before_verification`), `failed` (infrastructure), `not_verified` (acceptance rule not met, or result discarded because the source changed around the benchmark), `verified` (E2, with the previous level kept for a revert), `invalidated` (reverted).
+  - **Time limit:** one 3-minute budget covers the template build and all three processes, linked to the run token.
+  - **Validation:** exit code 0, exactly one output line, valid JSON, the requested `n`, the template's metric, and a non-negative value.
+  - **Acceptance** (`BenchmarkTemplates.Evaluate`): every value(n) ≥ 0.9·n, and for `RepositoryCallAmplification` also value(1000) ≥ 50·value(10). A failure reason looks like "benchmark ran; acceptance rule not met: value(10)=1 < 0.9·10".
+- **Infrastructure failure → run `partial`:** a template build failure, a non-zero exit, invalid output, a missing template, or the 3-minute timeout sets `verification_failed: …`. A rule not being met is a result, not a failure.
+- **Source binding** (plan §4.6):
+  1. The fingerprint is checked before verification; a change skips it all.
+  2. It is checked before and after each benchmark set; a change discards that result.
+  3. At step 6, if the final fingerprint differs, every E2 from the run is reverted to its previous level with "verification invalidated: source changed during run".
+  - **Beyond the plan:** if the run is stopped by a timeout or cancellation after E2 was awarded, the final check never runs, so those E2s are reverted too ("verification not confirmed").
+- The report notes that E2 means verified by a host-owned template bound to a demo seam, and applies only to the demo project in the hackathon.
+
+**No fallback needed.**
+
+### Verification
+
+| Check | Result |
+|---|---|
+| All tests | **124/124 pass** (20 analyzer, 104 host). H5 adds 20 host tests |
+| Verifier unit tests (fake runner) | Which benchmarks run: the required template runs for the P1 seam without a proposal (E2; previous level kept; observations recorded; demo-only note); a downgraded seam candidate still runs (E2 with confidence `low`); a removed one never runs; P5 is never verified by the P1 template, even when proposed; optional templates run only when accepted, and a proposal equal to the required run executes once. Acceptance: value(n) < 0.9·n → `not_verified` with the reason; the 50× clause alone (20/100/950) fails. Infrastructure failures (never E2): wrong `n`, wrong metric, negative value, two lines, not JSON, non-zero exit, build failure, 3-minute set timeout. Source binding: changed before verification → all skipped; changed around a set → result discarded |
+| Orchestrator tests | E2 kept in a complete run; a final fingerprint change → `partial`, with E2 reverted to E1 and `invalidated`; verifier infrastructure failure → `partial` (`verification_failed: …`); run timeout during verification → `partial`, with the unconfirmed E2 reverted |
+| Real benchmark integration tests | All three templates built against a throwaway demo repo and run in fresh processes: **E2 for P1, P3 and P2, with values exactly 10/100/1000**, the demo repo clean and the fingerprint unchanged. P1's seam rewritten to batch its lookups (`GetByIdsAsync`) → measured **1/1/1** → `not_verified`: "value(10)=1 < 0.9·10" |
+| **Live `/analyze`** (gpt-5.6-luna) | **`complete`** in 107 s. **P1 reached E2** via `RepositoryCallAmplification/OrderCustomerLookup` (10→10, 100→100, 1000→1000; both acceptance clauses met; ran once although the critic also proposed it). P2 reached E2 via the accepted `TaskFanOut/NotificationRecipients` proposal (10/100/1000 tasks started at once). P5 not run (not the P1 seam); P3 not run (optional, not proposed in this run); P4 E0. Graphify used by all reviewers, 0 denials; demo repo unchanged. Report strings keep UTF-8 `≥` and `·` |
+
 ## Pre-implementation environment checks (2026-09-29)
 
 Verified on one Windows x64 developer machine, and again with `tools/setup.py` against a fresh, empty `StateRoot` (simulating a new developer). These are smoke checks; they do not replace the formal H1 probe.
