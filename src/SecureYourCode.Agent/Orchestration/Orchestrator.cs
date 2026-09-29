@@ -54,9 +54,19 @@ public sealed class Orchestrator(
             RecordStop(run, requestAborted.IsCancellationRequested ? "cancelled" : "timeout");
         }
 
+        // The run status is decided here and never depends on publication (plan §4.7).
         Finish(run);
         using var publishCts = new CancellationTokenSource(TimeSpan.FromSeconds(10)); // fresh: runCts may be cancelled
-        await publisher.PublishAsync(run.Report, runDirectory, publishCts.Token);
+        try
+        {
+            await publisher.PublishAsync(run.Report, runDirectory, publishCts.Token);
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(exception, "Report publication failed for run {RunId} (status {Status})", run.Report.Run.RunId, run.Report.Run.Status);
+            throw exception as ReportPublicationException ?? new ReportPublicationException(run.Report, exception.Message, exception);
+        }
+
         return run.Report;
     }
 

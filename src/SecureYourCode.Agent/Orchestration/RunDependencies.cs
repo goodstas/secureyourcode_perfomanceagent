@@ -55,17 +55,8 @@ public interface IStaticAnalysis
     Task<StaticAnalysisResult> RunAsync(string analysisFingerprint, string runDirectory, CancellationToken cancellationToken);
 }
 
-/// <summary>Publishes report.json / report.html (plan §4.7). Implemented in H6; publication never changes the run status.</summary>
+/// <summary>Publishes report.json / report.html (plan §4.7); publication never changes the run status.</summary>
 public interface IReportPublisher
 {
     Task PublishAsync(Report report, string runDirectory, CancellationToken cancellationToken);
-}
-
-public sealed class PendingReportPublisher(ILogger<PendingReportPublisher> logger) : IReportPublisher
-{
-    public Task PublishAsync(Report report, string runDirectory, CancellationToken cancellationToken)
-    {
-        logger.LogInformation("Run {RunId} finished with status {Status}; report files are published from H6 on", report.Run.RunId, report.Run.Status);
-        return Task.CompletedTask;
-    }
 }

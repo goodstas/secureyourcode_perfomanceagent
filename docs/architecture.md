@@ -343,6 +343,36 @@ Model output varies between runs (one run had an extra CPU-framed duplicate of P
 | Real benchmark integration tests | All three templates built against a throwaway demo repo and run in fresh processes: **E2 for P1, P3 and P2, with values exactly 10/100/1000**, the demo repo clean and the fingerprint unchanged. P1's seam rewritten to batch its lookups (`GetByIdsAsync`) → measured **1/1/1** → `not_verified`: "value(10)=1 < 0.9·10" |
 | **Live `/analyze`** (gpt-5.6-luna) | **`complete`** in 107 s. **P1 reached E2** via `RepositoryCallAmplification/OrderCustomerLookup` (10→10, 100→100, 1000→1000; both acceptance clauses met; ran once although the critic also proposed it). P2 reached E2 via the accepted `TaskFanOut/NotificationRecipients` proposal (10/100/1000 tasks started at once). P5 not run (not the P1 seam); P3 not run (optional, not proposed in this run); P4 E0. Graphify used by all reviewers, 0 denials; demo repo unchanged. Report strings keep UTF-8 `≥` and `·` |
 
+## H6 — Reports (2026-09-29)
+
+### Decisions
+
+- **`report.json`** is the canonical report object serialized with the web defaults (camelCase, indented): the exact shape `/analyze` returns (`ReportJson`). Missing fix directions stay `null` in JSON; the HTML shows "no fix direction provided".
+- **`report.html`** (`HtmlReportRenderer`) is rendered server-side from the same object.
+  - **Security:** no JavaScript, no external resources (inline CSS only; collapsibles are `<details>`), and a `Content-Security-Policy` meta of `default-src 'none'; style-src 'unsafe-inline'`, so even an encoding bug could not run script or load anything. Every dynamic value, in text and in attributes, goes through `WebUtility.HtmlEncode`; the report JSON is not embedded in the page.
+  - **Sections:** header; banners when the run is not `complete` (amber `partial`, red `failed`, with the reason) or the graph is not `current` (`stale`/`none`, with its meaning); Run; Provenance (commit, dirty flag, fingerprint, graph fingerprint); Token usage (per session and total, cost column labelled "premium request cost units"); Reviewers (status, error, Graphify calls, denied requests, notes); findings grouped into *Memory & Allocation*, *CPU & Amplification* and *Concurrency* (critic `keep`) and *Low-confidence candidates* (`downgrade`); a collapsed *Rejected by critic* list; Notes.
+  - **Each finding** is a collapsed `<details>` with an evidence badge (E0 grey, E1 blue, E2 green, with a title such as "E2: verified by host benchmark template …"), an origin label (Roslyn / AI), a confidence label, and rule, location and symbol in the summary. The body holds every §4.7 field: candidate ID, category, origin (with reviewers), analyzer message, mechanism, trigger, execution path, evidence, critic decision and rationale, verification result with benchmark observations, and fix direction. There is no severity and no overall score.
+- **Transactional publication** (`FileReportPublisher`, replacing the H4 placeholder):
+  1. Both files are written to `<StateRoot>/reports/<runId>_<shortSha>[-dirty].tmp/` (`unknown` when there is no commit).
+  2. The folder is renamed to its final name in one step.
+  3. Only then is `latest.txt` replaced (temp file + rename).
+
+  Any failure deletes the temp folder, leaves `latest.txt` unchanged, and raises `ReportPublicationException`. `RunAsync` computes the run status *before* publishing, logs a failure, and rethrows it carrying the report. `/analyze` then answers **HTTP 500** with `{ error, runId, runStatus, detail }`. The run status never depends on publication. Every run is published, including `partial` and `failed` ones, with whatever completed.
+
+**No fallback needed.**
+
+### Verification
+
+| Check | Result |
+|---|---|
+| All tests | **131/131 pass** (20 analyzer, 111 host). H6 adds 7 host tests |
+| Renderer | Every section, banner, badge (e0/e1/e2), Roslyn/AI label and confidence label present; "no fix direction provided"; "premium request cost units"; *Rejected by critic* collapsed; balanced `<details>`; no "severity". No banner for a `complete`/`current` run; red banner for `failed` with graph `none` |
+| **HTML encoding** | A fixture puts `<script>alert('x')</script>` (a script copied from a source comment) and an attribute breakout `"><img src=x onerror=alert(1)>` into every dynamic field: run reason, models, commit, notes, reviewer notes and error, candidate ID (an `id` attribute), rule, file, symbol, confidence, analyzer message, mechanism, trigger, graph path, fix direction, critic rationale, verification status/template/reason, reviewers, token-usage session and model. The page contains **no `<script` and no `<img`** at all; the payload appears encoded (`&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;`); the attribute stays intact (`id="candidate-&quot;&gt;&lt;img …&gt;"`); the CSP meta is present |
+| Publication | Success: `<runId>_<sha7>-dirty/` with both files; `report.json` equals the serialized object; `latest.txt` updated; no `.tmp` left. Failure (a file already occupies the final folder name): `ReportPublicationException` carrying the report, temp folder removed, `latest.txt` unchanged |
+| Orchestrator | A publisher throwing `IOException("disk full")` → `ReportPublicationException` whose report keeps the computed status `complete` |
+| **Live `/analyze`** (gpt-6-luna) | `complete` in 101 s, HTTP 200. Published `reports/<runId>_1656394/` with `report.json` and `report.html`; `latest.txt` points to it; no `.tmp` folder; the HTTP body and `report.json` describe the same run. P1 **E2** (required benchmark) and P3 **E2** (accepted `CollectionGrowth/ReportCache` proposal, a first in live runs); P2 and P5 E1; P4 E0 |
+| **HTML viewed** | The page contains no `<script`, `src=`, `href=`, `@import` or `url(` (self-contained). The browser pane does not open `file://` URLs, so the file was served unchanged from a throwaway `127.0.0.1` static server and inspected: header, Run, Provenance, Token usage, Reviewers, the three category groups with E2 (green), E1 (blue) and E0 (grey) badges and Roslyn/AI labels, an expanded E2 finding (execution path from Graphify, critic rationale, verification with observations 10/100/1000, fix direction), *Low-confidence candidates* (empty), a collapsed *Rejected by critic*, and Notes. All rendered correctly |
+
 ## Pre-implementation environment checks (2026-09-29)
 
 Verified on one Windows x64 developer machine, and again with `tools/setup.py` against a fresh, empty `StateRoot` (simulating a new developer). These are smoke checks; they do not replace the formal H1 probe.

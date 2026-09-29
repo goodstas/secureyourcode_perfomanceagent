@@ -1,6 +1,7 @@
 using SecureYourCode.Agent.Graph;
 using SecureYourCode.Agent.Infrastructure;
 using SecureYourCode.Agent.Orchestration;
+using SecureYourCode.Agent.Reporting;
 using SecureYourCode.Agent.StaticAnalysis;
 using SecureYourCode.Agent.Verification;
 
@@ -32,7 +33,7 @@ builder.Services.AddSingleton<PromptLibrary>(_ => new PromptLibrary());
 builder.Services.AddSingleton<IReviewerClientFactory, CopilotReviewerClientFactory>();
 builder.Services.AddSingleton<IBenchmarkRunner, DotnetBenchmarkRunner>();
 builder.Services.AddSingleton<IVerificationStage, BenchmarkVerifier>();
-builder.Services.AddSingleton<IReportPublisher, PendingReportPublisher>();
+builder.Services.AddSingleton<IReportPublisher, FileReportPublisher>();
 builder.Services.AddSingleton(OrchestrationTimeouts.Default);
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<IOrchestrator, Orchestrator>();
@@ -75,6 +76,17 @@ app.MapPost("/analyze", async (HttpRequest http, IOrchestrator orchestrator, Loc
     try
     {
         return Results.Ok(await orchestrator.RunAsync(requestAborted));
+    }
+    catch (ReportPublicationException exception)
+    {
+        // The analysis finished with a computed status; only writing the reports failed (plan §4.7).
+        return Results.Json(new
+        {
+            error = "report_publication_failed",
+            runId = exception.Report.Run.RunId,
+            runStatus = exception.Report.Run.Status,
+            detail = exception.Message,
+        }, statusCode: StatusCodes.Status500InternalServerError);
     }
     finally
     {

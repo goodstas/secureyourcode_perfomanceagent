@@ -323,6 +323,21 @@ public class OrchestratorTests
     }
 
     [Fact]
+    public async Task PublicationFailure_SurfacesWithTheComputedStatus_WhichItNeverChanges()
+    {
+        using var env = await new TestEnvironment().WithDemoRepoAsync();
+        var repository = new FakeRepository(["fp1"]);
+        var orchestrator = new Orchestrator(repository, new FakeGraphs(GraphStatuses.Current, null), new FakeStaticAnalysis(Baseline),
+            new FakeClientFactory(HappyClient()), new FakeVerifier(), new ThrowingPublisher(), env.Paths, OrchestrationTimeouts.Default,
+            TimeProvider.System, NullLogger<Orchestrator>.Instance);
+
+        var error = await Assert.ThrowsAsync<ReportPublicationException>(() => orchestrator.RunAsync(CancellationToken.None));
+
+        Assert.Equal(RunStatuses.Complete, error.Report.Run.Status);
+        Assert.Contains("disk full", error.Message);
+    }
+
+    [Fact]
     public async Task GateAllowsOneRunAtATime()
     {
         using var env = await new TestEnvironment().WithDemoRepoAsync();
@@ -382,6 +397,12 @@ public class OrchestratorTests
             var summary = new VerificationSummary { InfrastructureFailure = infrastructureFailure };
             return summary;
         }
+    }
+
+    private sealed class ThrowingPublisher : IReportPublisher
+    {
+        public Task PublishAsync(Report report, string runDirectory, CancellationToken cancellationToken) =>
+            Task.FromException(new IOException("disk full"));
     }
 
     private sealed class RecordingPublisher(List<Report> published) : IReportPublisher
