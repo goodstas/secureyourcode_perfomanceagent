@@ -1,0 +1,112 @@
+This is an implementation request. Implement SecureYourCode from
+AGENTS.md and docs/IMPLEMENTATION_PLAN_HACKATHON_v1.5.md. The v1.5 plan is
+the authoritative product specification. The operational clarifications
+below govern this implementation run; they do not expand product scope.
+
+MODE AND ENVIRONMENT
+- Work directly in this Git repository (AppWorkspace), on the dedicated
+  implementation branch prepared by the operator.
+- Resolve StateRoot to the absolute path returned by combining the current
+  user's home directory with .secureyourcode. Do not pass a literal ~ to .NET
+  file APIs. RepoPath is StateRoot/demo-repo, separate from AppWorkspace.
+- Use the OS and toolchain of this terminal throughout. Do not switch between
+  Windows and WSL or copy authentication profiles between them.
+- Build the application with Codex; use GitHub.Copilot.SDK for the application's
+  reviewers as specified. Do not replace that runtime with Codex.
+- Implement only H0-H7. No v2 features or unrelated refactoring.
+
+AUTHORIZED WORK
+- You may edit implementation files, restore project dependencies, create
+  project-local tools and StateRoot virtual environments, run builds/tests,
+  start and stop processes you own, and create local Git commits in both
+  AppWorkspace and the app-owned demo repository without routine approval.
+- Normal incidental writes by Git, .NET/NuGet, Python/pip, and the authenticated
+  CLI to their existing user caches, temporary directories and session stores
+  are authorized. Record their resolved locations. This narrowly supplements
+  section 0's filesystem boundary; it is not permission to edit arbitrary
+  user files, global configuration, or unrelated repositories.
+- Use existing authenticated sessions or operator-provided environment
+  credentials. Never print credentials or copy them into source or reports.
+- No administrator elevation, machine-wide installs, account/security-policy
+  changes, external publication, pushes, force-pushes, or deployment. Finish
+  independent work if one of these would be required.
+- H1's user-profile canary is authorized only inside a disposable runner's
+  dedicated profile. Never overwrite an existing instruction file. On a
+  normal profile, do not plant a file outside the approved roots: record that
+  location as untested and take the prescribed neutral-directory/no-tools
+  fallback unless isolation can otherwise be established. Always clean up
+  only canary files created by this run, including after failures.
+- Claude's launch permissions do not authorize unrestricted tools in the
+  application's Copilot sessions. Preserve all section 4.5 restrictions.
+
+START AND RESUME
+1. Read AGENTS.md, existing docs/architecture.md and docs/progress.md, then
+   read the entire v1.5 plan. Inspect Git status and recent commits.
+2. Preserve existing work. Infer the next incomplete milestone from code,
+   recorded checks and Git history, not merely from a commit title.
+3. Check .NET 10, Git identity, Python/venv, Copilot runtime availability,
+   package-feed access, credentials through a harmless real request, and
+   port 9876. Do not kill an unrelated process to reclaim that port.
+4. Pin and record the actual .NET SDK, NuGet packages, Python/Graphify,
+   Husky, and Copilot CLI/runtime version and resolved executable paths.
+   Verify which CLI the SDK actually launches; a standalone CLI login or
+   version check alone does not prove that SDK integration works.
+5. Create docs/progress.md with H0-H7 states and the next concrete action.
+   Use: not-started, in-progress, passed, fallback, blocked, incomplete.
+   Track Definition-of-Done separately from milestone completion.
+
+EXECUTION
+- Continue H0 through H7 in dependency order without asking whether to
+  continue. A progress message, successful commit, or milestone transition
+  is not a stopping point. If a component is blocked, work on independent
+  components before ending the run.
+- Choose the simplest option consistent with the plan for ordinary
+  ambiguities, and record it. Do not redesign the architecture.
+- H1 is executable discovery, not speculation. Inspect the installed SDK
+  and actual CLI help, compile small probes, and retain sanitized evidence.
+  Never invent option names, tool identifiers, event fields or CLI flags.
+- Run the final permission and instruction-isolation probes, including
+  specialist and critic configurations. Use only the plan's documented
+  fallbacks. A neutral working directory alone is not proof that user-level
+  instructions are disabled. If even the safe fallback cannot be configured,
+  mark the live integration blocked and continue deterministic components.
+- Measure cumulative active working time per milestone across resumptions.
+  At its budget, apply its documented fallback and record the outcome.
+  H0 and H7 have no documented fallback: preserve work, record unmet items,
+  and continue only work whose prerequisites are satisfied. Do not invent
+  a successful fallback. Do not retry the same failed approach indefinitely.
+- For transient external failures, make at most two bounded retries, honoring
+  Retry-After. Do not loop on authentication, quota, policy or permission
+  failures. Record the blocker and continue independent work.
+- Keep the intentionally defective demo fixtures intact. Never change ground
+  truth after observing results, weaken acceptance criteria, delete failing
+  tests to claim success, or substitute mock results for live checks.
+
+VERIFICATION AND CHECKPOINTS
+- Run the plan-required checks and focused tests for evidence assignment,
+  report encoding/publication, timeouts and source binding. Keep deterministic
+  tests runnable without live credentials; label live integration separately.
+- After each milestone, run the applicable build/tests, update
+  docs/architecture.md and docs/progress.md, then commit as H<n>: <summary>.
+  Record the commands, result, evidence location, versions and fallbacks in
+  that same checkpoint. Do not claim zero tests executed as tests passing.
+- If a blocker prevents a green checkpoint, preserve the work and commit
+  explicitly as WIP H<n>: <blocker>; mark it blocked/incomplete, never passed.
+  This is an operational exception to the green-milestone commit rule.
+- Do not reset, clean, overwrite or discard unrelated work to get a green
+  tree. Do not install the demo hook into AppWorkspace.
+- Update progress before long external operations and whenever a blocker or
+  fallback changes the next action. If interrupted, the next session must be
+  able to resume using only the repository and these records.
+
+FINISH
+End only when H0-H7 have been attempted as far as dependencies permit and
+each Definition-of-Done item is assessed, or no authorized independent work
+remains. A limit, expired credential or environment failure may prevent full
+completion; report it precisely rather than claiming success.
+Write docs/implementation-summary.md with completed and unfinished milestones,
+actual test results, every DoD item marked met/not-met/blocked, fallbacks,
+limitations, and exact start/analyze/evaluate/demo commands. If no successful
+live run exists, say so and do not fabricate demo/fallback artifacts.
+In the final response give the implementation status, latest checkpoint,
+remaining blockers and the exact next action needed to resume.
