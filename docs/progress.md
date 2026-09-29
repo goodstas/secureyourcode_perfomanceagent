@@ -12,7 +12,7 @@ Shared across the team. States: not-started, in-progress, passed, fallback, bloc
 | H4 Orchestration | passed | `/analyze` with gate and `RunAsync` (30-min run / 10-min session timeouts, cancellation reasons, failure report), three specialists + critic on the H1 final configuration, JSON validation with one repair, consolidation with immutable baseline identity, critic decision semantics, token usage, run-status rules. 104/104 tests; three live runs `complete` (latest: exactly P1–P5, Graphify used by every reviewer). See `docs/architecture.md` › H4. Report files are H6; benchmarks are H5. Tag `h4` |
 | H5 Verification | not-started | |
 | H6 Reports | not-started | |
-| H7 Evaluation + demo | not-started | |
+| H7 Evaluation + demo | not-started | Open item carried from H4: cross-pillar duplicate findings (see `docs/architecture.md` › Open items); decide after measuring the H7 run |
 
 Definition-of-Done items (plan §7): none assessed yet.
 
