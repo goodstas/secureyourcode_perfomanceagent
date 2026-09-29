@@ -1,0 +1,6 @@
+[
+  ["query_graph", { "question": "Which code calls ICustomerRepository GetByIdAsync?" }],
+  ["get_node", { "label": "OrderSummaryService" }],
+  ["get_neighbors", { "label": "OrderSummaryService" }],
+  ["shortest_path", { "source": "OrderSummaryService", "target": "ICustomerRepository" }]
+]

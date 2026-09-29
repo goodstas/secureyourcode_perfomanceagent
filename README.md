@@ -26,6 +26,8 @@ python tools/setup.py --login
 
 This creates your per-user state folder (`~/.secureyourcode`), installs the pinned Graphify and Copilot CLI into it, builds and tests the solution, opens the browser sign-in for Copilot, and verifies the sign-in through the SDK. Re-running it is safe; after the first time, use `python tools/setup.py` without `--login`.
 
+During sign-in the CLI asks **"System keychain unavailable. Store token in plaintext config file? (y/N)"**. Answer **`y`**. The app uses the Copilot SDK's isolated client mode, which deliberately ignores the system keychain and reads credentials only from `~/.secureyourcode/copilot` (your user profile, outside the repository). Treat that file like a password. If you prefer a narrower credential, sign in with a fine-grained personal access token that has only the "Copilot Requests" permission (`copilot login --with-token`, same environment variables as `setup.py` uses).
+
 To also confirm model access with one short prompt (uses a tiny amount of your Copilot quota):
 
 ```bash

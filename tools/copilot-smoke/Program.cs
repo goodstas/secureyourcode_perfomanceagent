@@ -1,6 +1,8 @@
 // Per-developer Copilot environment check. Usage: dotnet run --project tools/copilot-smoke -- auth | chat
 //   auth: start the SDK's bundled runtime and report runtime version, sign-in and quota. No model call.
-//   chat: additionally send one short prompt in a session where every tool call is denied.
+//   chat: additionally send one short prompt in a session with no tools, where any tool call would be denied.
+// Uses the same isolated client mode as the host (CopilotClientMode.Empty), which reads credentials only from
+// <StateRoot>/copilot, never from the system keychain (see docs/architecture.md, H1).
 // Exit codes: 0 ok, 2 not signed in, 1 other failure.
 using System.Text.Json;
 using GitHub.Copilot;
@@ -17,6 +19,7 @@ Directory.CreateDirectory(neutralDir);
 using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
 await using var client = new CopilotClient(new CopilotClientOptions
 {
+    Mode = CopilotClientMode.Empty,
     BaseDirectory = Path.Combine(stateRoot, "copilot"),
     WorkingDirectory = neutralDir,
 });
@@ -51,6 +54,7 @@ var toolRequests = 0;
 await using var session = await client.CreateSessionAsync(new SessionConfig
 {
     WorkingDirectory = neutralDir,
+    AvailableTools = [], // Empty mode requires an explicit allow-list; this check needs no tools.
     OnPermissionRequest = (request, invocation) =>
     {
         Interlocked.Increment(ref toolRequests);

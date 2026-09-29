@@ -123,15 +123,19 @@ def build_and_test() -> None:
 
 def copilot_login(root: Path) -> None:
     step("Copilot sign-in (interactive)")
-    env = dict(os.environ, COPILOT_HOME=str(root / "copilot"))
+    # The host uses the SDK's isolated client mode, which reads credentials only from COPILOT_HOME, never from the
+    # system keychain. With the keychain disabled, the CLI asks to store the token in a plaintext config file there:
+    # answer y. The file stays in <StateRoot>/copilot (per user, outside the repository).
+    print("  When asked 'Store token in plaintext config file? (y/N)', answer y (see README.md).")
+    env = dict(os.environ, COPILOT_HOME=str(root / "copilot"), COPILOT_DISABLE_KEYTAR="1")
     check([copilot_cli(root), "login"], env=env)
 
 
 def login_hint(root: Path) -> str:
     cli, home = copilot_cli(root), root / "copilot"
     if IS_WINDOWS:
-        return f'$env:COPILOT_HOME="{home}"; & "{cli}" login'
-    return f'COPILOT_HOME="{home}" "{cli}" login'
+        return f'$env:COPILOT_HOME="{home}"; $env:COPILOT_DISABLE_KEYTAR="1"; & "{cli}" login'
+    return f'COPILOT_HOME="{home}" COPILOT_DISABLE_KEYTAR=1 "{cli}" login'
 
 
 def check_copilot(root: Path, send_prompt: bool) -> bool:

@@ -72,6 +72,99 @@ Per-developer setup is automated by `tools/setup.py`; see `README.md`.
 | Demo project builds normally | pass in the materialized repo: 0 warnings, 0 errors; `git status --porcelain` is empty after the build (bin/obj ignored, so the fingerprint is unaffected) |
 | OS | detected at runtime and logged; H0 verified on Windows x64 |
 
+## H1 — Compatibility probe (2026-09-29)
+
+Executable discovery against GitHub.Copilot.SDK 1.0.15 (runtime 1.0.89) and graphifyy 0.9.71. Probe sources: `tools/h1-probe/` (C# console app: `dotnet run --project tools/h1-probe -- <step> [--mode cli|empty] [--agent-names dash|mcpdash|raw] [--filter-names dash|mcpdash|raw] [--client-wd neutral|repo] [--env-context default|host]`) and `tools/h1-probe/graphify_mcp_probe.py`. Sanitized evidence (home directory shown as `~`) is written per developer to `<StateRoot>/probe/evidence/` and is not committed. The API surface was established by reflecting over the installed SDK assembly and reading its XML docs, not assumed. **No plan §4.5 fallback was needed.** Model: `auto` resolved to `claude-sonnet-5` in every probe run; every model call reported `Cost = 1`.
+
+### Recorded values
+
+| Plan item | Value |
+|---|---|
+| Send-and-wait method (step 1) | `CopilotSession.SendAndWaitAsync(MessageOptions options, TimeSpan? timeout, CancellationToken ct)`, returning `AssistantMessageEvent` (`Data.Content`) |
+| Working-directory mechanism (step 2) | **Session option `SessionConfig.WorkingDirectory = RepoPath`.** Proven with the client's `WorkingDirectory` pointing at an empty folder: `view` read `Services/OrderSummaryService.cs`, `grep` found `GetByIdsAsync`, `glob` listed `Services/*Notification*.cs`, all in RepoPath |
+| `graphifyOutputRelativePath` (step 3) | `graphify-out/graph.json`, via `graphify extract <RepoPath> --code-only --no-cluster --out <folder under StateRoot>`. RepoPath stayed byte-identical (`git status --porcelain --ignored` unchanged, no `graphify-out/`) |
+| `--no-cluster` | **Used.** The four needed queries return the same results on a `--no-cluster` graph as on a clustered one (only `community` is empty). The formats differ: `--no-cluster` writes `{nodes, edges, hyperedges, input_tokens, output_tokens, extracted_sources}`; clustered writes node-link `{directed, multigraph, graph, nodes, links, hyperedges, built_at_commit}`. The MCP server loads both |
+| `graphStructurePredicate` | Root is a JSON object; `nodes` is a non-empty array whose elements are objects with a string `id`; `edges` is an array. (Derived from the real `--no-cluster` output: 107 nodes, 163 edges for the demo repo; node `source_file` values are repo-relative, e.g. `Services/OrderSummaryService.cs`) |
+| Graphify MCP server | Started per session by the SDK: `McpStdioServerConfig { Command = <Graphify interpreter>, Args = ["-m", "graphify.serve", <graph.json>], Tools = graphifyServerToolNames, WorkingDirectory = <neutral folder under StateRoot> }` |
+| Tools the running Graphify server exposes | `query_graph, get_node, get_neighbors, get_community, god_nodes, graph_stats, shortest_path, list_prs, get_pr_impact, triage_prs` (from a real MCP `list_tools`, and again from `session.Rpc.Mcp.ListToolsAsync("graphify")`) |
+| **`graphifyServerToolNames`** (raw, `McpStdioServerConfig.Tools`) | `query_graph`, `get_node`, `get_neighbors`, `shortest_path`. Excluded: `list_prs`, `get_pr_impact`, `triage_prs` (they run the external `gh` CLI and reach the network, `graphify/prs.py`); `get_community` (needs clustering); `god_nodes`, `graph_stats` (not needed) |
+| **`graphifyAgentToolNames`** (`CustomAgentConfig.Tools`, step 4) | `graphify-query_graph`, `graphify-get_node`, `graphify-get_neighbors`, `graphify-shortest_path` (`<server-key>-<tool>`). Proven: an explicitly selected agent (`SessionConfig.Agent = "MemoryReviewer"`) produced a real `ToolExecutionStartEvent` with `ToolName = graphify-shortest_path`, `McpServerName = graphify`, `McpToolName = shortest_path`, completed successfully, and its reply contained the real graph path |
+| **`graphifySessionFilterToolNames`** (`SessionConfig.AvailableTools`, step 5) | `mcp:graphify-query_graph`, `mcp:graphify-get_node`, `mcp:graphify-get_neighbors`, `mcp:graphify-shortest_path`. Proven in a plain session (no agent), where the allow-list alone decides: Graphify available (model saw 7 tools) and executed. Negative control with the raw names: Graphify absent (3 tools) |
+| Built-in tool names (runtime 1.0.89, `client.Rpc.Tools.ListAsync`) | `powershell, read_powershell, stop_powershell, list_powershell, glob, grep, create, edit, skill, view, web_fetch, task, read_agent, list_agents, write_agent`. Read-only: `view`, `grep`, `glob` |
+| Permission request exposes the tool kind (step 5) | **Yes.** `PermissionRequest.Kind` plus typed subclasses: `PermissionRequestRead` (`Path`, `ResolvedPath`), `PermissionRequestWrite` (`FileName`), `PermissionRequestShell` (`FullCommandText`), `PermissionRequestUrl` (`Url`), `PermissionRequestMcp` (`ServerName`, `ToolName`, `Args`, `ReadOnly`), `PermissionRequestMemory`, `PermissionRequestCustomTool`, `PermissionRequestHook`, `PermissionRequestExtension*`, `PermissionRequestWorkflow`. Observed: `PermissionRequestMcp.ToolName` is server-qualified (`graphify-shortest_path`), and Graphify reports `ReadOnly = false`, so the handler must not rely on that flag |
+| Usage fields (step 6) | `AssistantUsageEvent` fires once per model call; `Model`, `InputTokens`, `OutputTokens`, `Cost` are all populated (`Cost = 1` per call in these runs). `availableToolCount` appears in the event JSON but has no public property in SDK 1.0.15 |
+| Plain-session fallback (step 7) | Works: no custom agent, specialist instructions at the top of the prompt, same allow-list, strict handler and Graphify; (a) Graphify executed, (b) `view`/`grep`/`glob` worked, (c) write/shell/URL blocked, RepoPath unchanged. It is usable, but not needed |
+
+### Permission-handler choice
+
+**Strict handler, never `PermissionHandler.ApproveAll`.** It approves only:
+- `PermissionRequestRead` whose `ResolvedPath` (or `Path`) lies inside RepoPath;
+- `PermissionRequestMcp` with `ServerName == "graphify"`, `ToolName` in `graphifyAgentToolNames`, and no `project_path` argument. Every Graphify tool accepts `project_path`, which loads `<project_path>/graphify-out/graph.json` from anywhere on disk (`graphify/serve.py`, `_resolve_graph_path`).
+
+It denies everything else: write, shell, URL, memory, custom tools, hooks, extensions, workflows, and anything unrecognised. Denials use `PermissionDecision.Reject(...)`. `PermissionDecision` is experimental in SDK 1.0.15, so the host needs `<NoWarn>GHCP001</NoWarn>`.
+
+The RepoPath restriction on reads is load-bearing. In several runs the model tried `view` on paths outside RepoPath (`~/Services/...`, a path under the Copilot folder, the runtime's session-state folder, `C:\`), and the handler denied every one. Handler-only test (write, shell and URL tools deliberately made available): all three attempts produced `shell`, `write` and `url` permission requests, all denied; no file was created and RepoPath stayed clean.
+
+### Client isolation mechanism (step 8)
+
+- **Client:** `CopilotClientOptions { Mode = CopilotClientMode.Empty, BaseDirectory = <StateRoot>/copilot }`. Empty mode disables optional features by default, exposes no tools unless `AvailableTools` is given, defaults `SkipCustomInstructions`/`CustomAgentsLocalOnly` to true, and sets `COPILOT_DISABLE_KEYTAR=1`, so credentials are read only from `<StateRoot>/copilot`.
+  **Consequence:** a normal `copilot login` (stored in the OS keychain) is invisible to Empty mode. Developers sign in with `COPILOT_DISABLE_KEYTAR=1` and accept the CLI's "store token in plaintext config file" prompt; `tools/setup.py --login` does this, and `tools/copilot-smoke` now checks Empty mode.
+- **Session options set explicitly (never relying on defaults):** `SkipCustomInstructions = true`, `EnableOnDemandInstructionDiscovery = false` (it would otherwise pull `AGENTS.md`/`.github/copilot-instructions.md` in after file views), `EnableConfigDiscovery = false`, `CustomAgentsLocalOnly = true`, `EnableSkills = false`, `EnableFileHooks = false`, `EnableHostGitOperations = false`, `EnableSessionStore = false`, `Memory = { Enabled = false }`.
+- **System prompt:** `SystemMessage = { Mode = Customize, Sections = { EnvironmentContext: Replace with host-written text naming the repository root and asking for absolute paths under it; CustomInstructions: Remove } }`. Found in verification: Empty mode strips the ambient environment context, so the model does not know the working directory and guessed wrong paths for `view`. Setting the client's `WorkingDirectory` to RepoPath as well did **not** fix this; the host-written environment context did (no out-of-repo reads afterwards). Removing the `CustomInstructions` section is an extra isolation layer.
+- **Discovered instruction locations** (`client.Rpc.Instructions.GetDiscoveryPathsAsync`): user level, under the redirected COPILOT_HOME, `<StateRoot>/copilot/copilot-instructions.md` and `<StateRoot>/copilot/instructions/`; repository level: `.github/copilot-instructions.md`, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.github/instructions/`, `.claude/rules/`. The user's own `~/.copilot` is not a discovery location while COPILOT_HOME is redirected.
+- **Canaries:** planted in a throwaway copy `<StateRoot>/probe-repo` (never the real demo repo), one distinct token per location. That is 9 in total: the 6 repository locations, the parent folder (`<StateRoot>/AGENTS.md`), and both user-level locations, which are inside `<StateRoot>/copilot` and so inside the approved roots. Pre-checks confirmed that none of these files existed; nothing was overwritten. All were removed after every run (post-checks clean).
+- **Positive control** (CopilotCli mode, default settings, prompt "List the files in the repository root."): the reply contained 8 canaries (all repository and user-level ones). **The parent-folder canary was not loaded even under defaults**; the runtime does not read above the repository's git root.
+- **Isolation test** (final configuration, Empty mode, run as a specialist `MemoryReviewer` and as the critic `VerificationReviewer`): **no canary token in either reply → PASS.** Run twice: before and after adding the host environment context; both passed.
+- **Supplementary injection check.** `session.Rpc.Instructions.GetSourcesAsync()` still *lists* the discovered canary files under the final configuration. To tell discovery from injection: same session config, same one-line prompt, fixed model, first-call input tokens without vs with canaries.
+
+  | Run | Final config, Empty (without → with) | Positive control, CopilotCli defaults (without → with) |
+  |---|---|---|
+  | 1 | 6,086 → 6,081 (−5) | 6,243 → 6,543 (+300) |
+  | 2 | 6,083 → 6,083 (0) | 6,248 → 6,544 (+296) |
+
+  Injecting the canaries costs about 300 tokens, and the isolated configuration shows no increase. **Conclusion: discovered instruction files are not injected under the final configuration.** Note: run 1 printed "INCONCLUSIVE" because the probe's pre-set rule demanded an exact 0 delta, and per-session variation is a few tokens (baselines 6,081–6,086); run 2, unchanged, met it.
+
+### Final configuration for H4
+
+```csharp
+var client = new CopilotClient(new CopilotClientOptions { Mode = CopilotClientMode.Empty, BaseDirectory = "<StateRoot>/copilot" });
+new SessionConfig
+{
+    WorkingDirectory = RepoPath,
+    AvailableTools = ["view", "grep", "glob", "mcp:graphify-query_graph", "mcp:graphify-get_node", "mcp:graphify-get_neighbors", "mcp:graphify-shortest_path"],
+    McpServers = { ["graphify"] = new McpStdioServerConfig { Command = GraphifyPython, Args = ["-m", "graphify.serve", graphJsonPath],
+                   Tools = ["query_graph", "get_node", "get_neighbors", "shortest_path"], WorkingDirectory = "<neutral folder under StateRoot>" } },
+    CustomAgents = [new CustomAgentConfig { Name = "<Reviewer>", Description = "...", Prompt = "...", Infer = false,
+                   Tools = ["view", "grep", "glob", "graphify-query_graph", "graphify-get_node", "graphify-get_neighbors", "graphify-shortest_path"] }],
+    Agent = "<Reviewer>",
+    OnPermissionRequest = strictHandler,
+    SkipCustomInstructions = true, EnableOnDemandInstructionDiscovery = false, EnableConfigDiscovery = false, CustomAgentsLocalOnly = true,
+    EnableSkills = false, EnableFileHooks = false, EnableHostGitOperations = false, EnableSessionStore = false, Memory = new() { Enabled = false },
+    SystemMessage = new() { Mode = SystemMessageMode.Customize, Sections = {
+        [SystemMessageSection.EnvironmentContext] = new() { Action = SectionOverrideAction.Replace, Content = "The repository under review is <RepoPath> ..." },
+        [SystemMessageSection.CustomInstructions] = new() { Action = SectionOverrideAction.Remove } } },
+};
+```
+
+With no graph (graph status `none`), omit `McpServers` and the Graphify entries from both tool lists.
+
+### Probe runs (Empty mode unless noted)
+
+| Run | Result |
+|---|---|
+| `discover` (both modes) | Built-in tools and discovery paths recorded. Empty mode initially **not signed in** (keychain login invisible), resolved by the operator's sign-in with `COPILOT_DISABLE_KEYTAR=1` |
+| `basics` (CopilotCli, Empty) | PASS / PASS. Empty mode: the model saw exactly 3 tools |
+| `agent` (CopilotCli) first run | FAIL: the strict handler denied the Graphify call because it compared raw tool names; it revealed the server-qualified `PermissionRequestMcp.ToolName`. Handler fixed, then PASS |
+| `agent` (Empty) | PASS (7 tools) |
+| `secure` (CopilotCli, Empty) | PASS / PASS: (a) Graphify, (b) view/grep/glob, (c) write/shell/URL blocked, RepoPath unchanged; `GetSourcesAsync` empty |
+| `secure --client-wd repo` | FAIL: `view` tried an out-of-repo path (denied by the handler); showed the client working directory does not fix path guessing |
+| `secure --env-context host` (final configuration) | PASS, no out-of-repo reads |
+| `plain` (final configuration) | PASS |
+| `plain --filter-names raw` (negative control) | Graphify absent, as expected |
+| `handler` | PASS: shell, write and URL requests all denied, no file created |
+| `canary` (default context, then final configuration) | PASS / PASS: positive control 8 canaries; isolation test none |
+| `inject` ×2 | See table above |
+
 ## Pre-implementation environment checks (2026-09-29)
 
 Verified on one Windows x64 developer machine, and again with `tools/setup.py` against a fresh, empty `StateRoot` (simulating a new developer). These are smoke checks; they do not replace the formal H1 probe.
@@ -99,7 +192,6 @@ SDK API notes (to be confirmed in H1):
 - `AssistantUsageData` has no public `AvailableToolCount` property, although the serialized event contains `availableToolCount`.
 - `GetAuthStatusAsync`, `ListModelsAsync`, `SendAndWaitAsync` exist.
 
-## Open items for H1 (not yet verified — do not assume)
+## Open items
 
-- Copilot CLI isolation flags seen in `copilot --help`: `--no-custom-instructions`, `--disable-builtin-mcps`, `--allow-tool`/`--deny-tool`, `--deny-url`. The SDK-level equivalents must be found in the SDK API (probe step 8).
 - Copilot usage per plan: GitHub docs (checked 2026-09-29) say all plans include Copilot CLI and Free allows auto model selection only. Free has a small allowance that H1 plus repeated `/analyze` runs (4 sessions each, plus repair prompts) can exhaust, so the developer running H1 and the live demo should use a paid plan.
