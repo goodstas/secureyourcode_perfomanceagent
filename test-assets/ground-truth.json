@@ -1,0 +1,20 @@
+[
+  { "id": "P1", "expectedFinding": true,  "category": "CPU & Amplification", "ruleId": "PERF001",
+    "file": "Services/OrderSummaryService.cs", "startLine": 12, "endLine": 22 },
+  { "id": "P2", "expectedFinding": true,  "category": "Concurrency", "ruleId": "PERF003",
+    "file": "Services/NotificationService.cs", "startLine": 11, "endLine": 14 },
+  { "id": "P3", "expectedFinding": true,  "category": "Memory & Allocation", "ruleId": "PERF004",
+    "file": "Services/ReportCache.cs", "startLine": 7, "endLine": 33 },
+  { "id": "P4", "expectedFinding": true,  "category": "Memory & Allocation", "ruleId": "LLM-MEM",
+    "file": "Services/OrderEvents.cs", "startLine": 5, "endLine": 24 },
+  { "id": "P5", "expectedFinding": true,  "category": "CPU & Amplification", "ruleId": "PERF001",
+    "file": "Services/InvoiceService.cs", "startLine": 12, "endLine": 25 },
+  { "id": "N1", "expectedFinding": false,
+    "file": "Services/BatchedOrderService.cs", "startLine": 12, "endLine": 25 },
+  { "id": "N2", "expectedFinding": false,
+    "file": "Services/BatchedNotificationService.cs", "startLine": 11, "endLine": 17 },
+  { "id": "N3", "expectedFinding": false,
+    "file": "Services/ProductCache.cs", "startLine": 7, "endLine": 27 },
+  { "id": "N4", "expectedFinding": false,
+    "file": "Services/InventoryEvents.cs", "startLine": 3, "endLine": 26 }
+]

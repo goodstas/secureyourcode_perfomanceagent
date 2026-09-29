@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/SecureYourCode.Agent/SecureYourCode.Agent.csproj" />
+    <Project Path="src/SecureYourCode.PerformanceAnalyzer.Tests/SecureYourCode.PerformanceAnalyzer.Tests.csproj" />
+    <Project Path="src/SecureYourCode.PerformanceAnalyzer/SecureYourCode.PerformanceAnalyzer.csproj" />
+  </Folder>
+</Solution>

@@ -55,3 +55,14 @@ CodeCoverage/
 *.VisualState.xml
 TestResult.xml
 nunit-*.xml
+
+# Per-developer files (see README.md: nothing machine- or account-specific is committed)
+.vs/
+.idea/
+*.user
+*.suo
+.claude/settings.local.json
+.husky/.local-token
+graphify-out/
+__pycache__/
+.venv/
