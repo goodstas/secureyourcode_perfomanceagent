@@ -165,6 +165,48 @@ With no graph (graph status `none`), omit `McpServers` and the Graphify entries 
 | `canary` (default context, then final configuration) | PASS / PASS: positive control 8 canaries; isolation test none |
 | `inject` ×2 | See table above |
 
+## H2 — Analyzer (2026-09-29)
+
+`src/SecureYourCode.PerformanceAnalyzer` (netstandard2.0, Roslyn 5.0.0, `EnforceExtendedAnalyzerRules`, release tracking in `AnalyzerReleases.*.md`). All three rules are warnings in category `Performance`, and their messages say "potential". **No fallback needed.**
+
+### Rule decisions
+
+- **PERF001** (`QueryInLoopAnalyzer`, CPU & Amplification). Flags an invocation whose syntax lies inside the *body* of an enclosing loop (`ILoopOperation`: for, foreach, while, do). The walk up stops at lambdas and local functions (they run later). A `foreach` collection expression is evaluated once, so it is not flagged.
+  Matched APIs:
+  - EF Core: `ToList(Async)`, `First(OrDefault)(Async)`, `Single(OrDefault)(Async)`, `Count(Async)` when the receiver implements `IQueryable<T>`; `SaveChanges(Async)` on a `Microsoft.EntityFrameworkCore.DbContext`; `FindAsync` on a `DbContext` or `DbSet<T>`. EF types are matched by metadata name, so the demo needs no EF dependency.
+  - Repositories (lower confidence): a call whose receiver type or containing type name ends in `Repository`.
+  The diagnostic property `match` is `ef-query` or `repository`. LINQ-to-objects (`List<T>`, non-`IQueryable`) and building an `IQueryable` without executing it are not flagged.
+- **PERF003** (`UnboundedTaskFanOutAnalyzer`, Concurrency). `Task.WhenAll(<source>.Select(...))`; a trailing `ToList`/`ToArray`/`AsEnumerable` on the Select is unwrapped. The source is traced back through size-preserving `Enumerable` operators (`Chunk`, `Where`, `Distinct`, `OrderBy*`, `ThenBy*`, `AsEnumerable`, `ToList`, `ToArray`, `Cast`, `OfType`).
+  - Input-sized, so flagged: parameters, fields, properties, `await`ed or direct invocation results (query results), and locals whose initializer is one of these (traced up to 4 levels).
+  - Not flagged: collection literals, fixed arrays and collection expressions; `Enumerable.Range`/`Repeat` with a constant count; and **any `foreach` iteration variable**. That includes the plan's sequential bounded batch, `foreach (var batch in x.Chunk(n)) await Task.WhenAll(batch.Select(...))`.
+  - `x.Chunk(n).Select(...)` directly inside `WhenAll` **is** flagged, as the plan requires.
+- **PERF004** (`StaticCollectionGrowthAnalyzer`, Memory & Allocation). It collects, across the compilation, growth operations on `static` fields whose declared type is `Dictionary<,>`, `ConcurrentDictionary<,>` or `List<>`, with the plan's growth sets; dictionary indexer assignment counts as growth, `List<T>` indexer assignment does not. At compilation end it reports those whose field has no removal operation (`Remove`, `TryRemove`, `RemoveAt`, `RemoveAll`, `RemoveRange`, `Clear`) inside the field's containing type, nested types included. The rule therefore carries the `CompilationEnd` custom tag (reported in command-line builds and SARIF, not live in the IDE). Instance fields and other types (e.g. `MemoryCache`) are ignored.
+
+### Wiring into the demo repo
+
+The host's startup now calls `DemoRepoMaterializer.EnsureAnalyzerReferenceAsync` after materialization. It adds `<ItemGroup><Analyzer Include="<AppWorkspace>/src/SecureYourCode.PerformanceAnalyzer/bin/Release/netstandard2.0/SecureYourCode.PerformanceAnalyzer.dll" /></ItemGroup>` to the demo repo's `DemoShop.csproj` and commits it there ("Reference the SecureYourCode analyzer", app identity).
+- It is idempotent: an existing correct reference means no commit.
+- It repairs a stale path (e.g. after the repository moved) and commits the repair.
+- It refuses to start if the Release analyzer DLL is missing.
+
+`tools/setup.py` now builds the analyzer in Release. On Windows the compiler server keeps a loaded analyzer DLL open, so rebuilding it can need `dotnet build-server shutdown` first (noted in `README.md`).
+
+### Verification
+
+| Check | Result |
+|---|---|
+| Analyzer tests (`dotnet test`) | **20/20 pass**. PERF001 ×8: foreach, nested loops, for/while, EF Core query/`FindAsync`/`SaveChangesAsync` with stubs (positives); batched lookup before the loop, `IQueryable` built in a loop, LINQ-to-objects, call in a foreach collection expression (negatives). PERF003 ×5: parameter (method group and lambda + `ToList`), field and query result, `Chunk(20).Select` (positives); sequential bounded batches, collection literal/expression and `Range` with a constant (negatives). PERF004 ×7: `Dictionary.Add`, indexer + `TryAdd`, `ConcurrentDictionary` `TryAdd`/`AddOrUpdate`/`GetOrAdd`, `List` `Add`/`AddRange`/`Insert` (positives); `List<T>` indexer assignment, fields also removed/cleared (including from a nested type), instance fields (negatives). Each test fails on any missing or extra diagnostic |
+| Builds | Solution and analyzer (Debug and Release): 0 warnings, 0 errors, including the analyzer-authoring rules |
+| Demo build with the analyzer (`dotnet build -t:Rebuild` + SARIF) | Exactly 4 warnings, all ours: PERF001 `Services/OrderSummaryService.cs:17` (P1), PERF001 `Services/InvoiceService.cs:19` (P5), PERF003 `Services/NotificationService.cs:13` (P2), PERF004 `Services/ReportCache.cs:28` (P3). None for N1–N4, P4 or any other code. Each line lies inside its ground-truth range. The compiler reporting it was Roslyn 5.3, loading the analyzer built against 5.0 |
+| Host wiring on the real demo repo | First start added and committed the reference; second start: no new commit; working tree clean before and after demo builds |
+| Clean-checkout run (fresh StateRoot, `setup.py`, host, demo build) | Setup built everything (20/20 tests, Release analyzer); the host materialized the demo repo and referenced the checkout's analyzer; the demo build produced the same 4 diagnostics |
+| Stale analyzer path | Repaired and committed on the next start; tree clean |
+| Missing analyzer DLL | Host refuses to start ("The SecureYourCode analyzer is not built: …"); no commit |
+
+### Finding for H3: SARIF version
+
+The plan's command `"/p:ErrorLog=<path>,version=2"` produces **SARIF 1.0.0**. MSBuild splits `/p:` values on `,`, so `version=2` becomes a separate, ignored property. Escaping the comma, `/p:ErrorLog=<path>%2Cversion=2`, produces **SARIF 2.1.0**, which H3 must use. Observed 2.1.0 output: `runs[].results[].locations[0].physicalLocation.artifactLocation.uri` is an absolute `file:///` URI with no `uriBaseId` and no `originalUriBaseIds`; `region.startLine`/`endLine` present.
+
 ## Pre-implementation environment checks (2026-09-29)
 
 Verified on one Windows x64 developer machine, and again with `tools/setup.py` against a fresh, empty `StateRoot` (simulating a new developer). These are smoke checks; they do not replace the formal H1 probe.

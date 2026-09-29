@@ -22,6 +22,8 @@ var app = builder.Build();
 app.Logger.LogInformation("OS: {OS}; hook task template: {HookTemplate}", HostPlatform.Description, HostPlatform.HookTaskRunnerTemplate);
 app.Logger.LogInformation("AppWorkspace: {AppWorkspace}", paths.AppWorkspace);
 app.Logger.LogInformation("StateRoot: {StateRoot}", paths.StateRoot);
-await app.Services.GetRequiredService<DemoRepoMaterializer>().EnsureAsync(app.Lifetime.ApplicationStopping);
+var demoRepo = app.Services.GetRequiredService<DemoRepoMaterializer>();
+await demoRepo.EnsureAsync(app.Lifetime.ApplicationStopping);
+await demoRepo.EnsureAnalyzerReferenceAsync(app.Lifetime.ApplicationStopping);
 
 app.Run();

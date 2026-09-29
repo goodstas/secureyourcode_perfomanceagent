@@ -40,7 +40,7 @@ python tools/setup.py --check-model
 dotnet run --project src/SecureYourCode.Agent
 ```
 
-It listens on `http://127.0.0.1:9876` only. On first start it creates your access token (`~/.secureyourcode/access-token`) and materializes the demo repository (`~/.secureyourcode/demo-repo`) from `test-assets/demo-shop`. To refresh the demo repo after `test-assets/demo-shop` changes, stop the host, delete `~/.secureyourcode/demo-repo`, and start it again.
+It listens on `http://127.0.0.1:9876` only. On first start it creates your access token (`~/.secureyourcode/access-token`) and materializes the demo repository (`~/.secureyourcode/demo-repo`) from `test-assets/demo-shop`. At every start it makes sure the demo project references the Release build of the analyzer (`dotnet build src/SecureYourCode.PerformanceAnalyzer -c Release`, done by `tools/setup.py`) and commits that change in the demo repo; the host refuses to start if the analyzer has not been built. On Windows, if rebuilding the analyzer fails because the file is in use, run `dotnet build-server shutdown` first (the compiler server keeps loaded analyzers open). To refresh the demo repo after `test-assets/demo-shop` changes, stop the host, delete `~/.secureyourcode/demo-repo`, and start it again.
 
 ### Where things live
 

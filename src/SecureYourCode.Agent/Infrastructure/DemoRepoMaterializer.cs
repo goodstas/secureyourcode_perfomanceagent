@@ -1,3 +1,6 @@
+using System.Security;
+using System.Text.RegularExpressions;
+
 namespace SecureYourCode.Agent.Infrastructure;
 
 /// <summary>
@@ -19,6 +22,13 @@ public sealed class DemoRepoMaterializer(StatePaths paths, ILogger<DemoRepoMater
 
     private static readonly TimeSpan GitTimeout = TimeSpan.FromMinutes(1);
     private static readonly HashSet<string> SkippedDirectories = new(StringComparer.OrdinalIgnoreCase) { "bin", "obj", ".vs" };
+
+    // App-owned local repo: a fixed identity, so commits do not depend on each developer's git configuration.
+    private static readonly string[] AppIdentity =
+        ["-c", "user.name=SecureYourCode", "-c", "user.email=secureyourcode@localhost", "-c", "commit.gpgsign=false"];
+
+    private static readonly Regex AnalyzerItem =
+        new("""<Analyzer\s+Include="[^"]*SecureYourCode\.PerformanceAnalyzer\.dll"\s*/>""", RegexOptions.Compiled);
 
     public async Task EnsureAsync(CancellationToken cancellationToken)
     {
@@ -48,10 +58,7 @@ public sealed class DemoRepoMaterializer(StatePaths paths, ILogger<DemoRepoMater
 
             await GitAsync(temp, cancellationToken, "init", "--quiet", "--initial-branch=main");
             await GitAsync(temp, cancellationToken, "add", "--all");
-            // App-owned local repo: a fixed identity, so it does not depend on each developer's git configuration.
-            await GitAsync(temp, cancellationToken,
-                "-c", "user.name=SecureYourCode", "-c", "user.email=secureyourcode@localhost", "-c", "commit.gpgsign=false",
-                "commit", "--quiet", "--message", "Initial demo shop");
+            await GitAsync(temp, cancellationToken, [.. AppIdentity, "commit", "--quiet", "--message", "Initial demo shop"]);
 
             Directory.Move(temp, repoPath);
         }
@@ -62,6 +69,52 @@ public sealed class DemoRepoMaterializer(StatePaths paths, ILogger<DemoRepoMater
         }
 
         logger.LogInformation("Demo repository materialized at {RepoPath}", repoPath);
+    }
+
+    /// <summary>
+    /// Adds, or repairs, the demo project's reference to the Release analyzer build (plan §4.3, H2) and commits the change
+    /// in the demo repo. The path is absolute and machine-specific, so it only ever lives in the per-developer demo repo.
+    /// </summary>
+    public async Task EnsureAnalyzerReferenceAsync(CancellationToken cancellationToken)
+    {
+        var analyzer = paths.AnalyzerAssembly;
+        if (!File.Exists(analyzer))
+        {
+            throw new InvalidOperationException(
+                $"The SecureYourCode analyzer is not built: '{analyzer}' is missing. " +
+                "Build it with 'dotnet build src/SecureYourCode.PerformanceAnalyzer -c Release' (tools/setup.py does this).");
+        }
+
+        var project = Path.Combine(paths.RepoPath, "DemoShop.csproj");
+        var text = await File.ReadAllTextAsync(project, cancellationToken);
+        var item = $"<Analyzer Include=\"{SecurityElement.Escape(analyzer)}\" />";
+        if (text.Contains(item, StringComparison.Ordinal))
+        {
+            logger.LogInformation("Demo repository references the analyzer at {Analyzer}", analyzer);
+            return;
+        }
+
+        string updated;
+        if (AnalyzerItem.IsMatch(text))
+        {
+            updated = AnalyzerItem.Replace(text, _ => item, 1);
+        }
+        else
+        {
+            var end = text.LastIndexOf("</Project>", StringComparison.Ordinal);
+            if (end < 0)
+            {
+                throw new InvalidOperationException($"'{project}' has no closing </Project> element.");
+            }
+
+            var newline = text.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+            updated = text.Insert(end, $"  <ItemGroup>{newline}    {item}{newline}  </ItemGroup>{newline}{newline}");
+        }
+
+        await File.WriteAllTextAsync(project, updated, cancellationToken);
+        await GitAsync(paths.RepoPath, cancellationToken, "add", "DemoShop.csproj");
+        await GitAsync(paths.RepoPath, cancellationToken, [.. AppIdentity, "commit", "--quiet", "--message", "Reference the SecureYourCode analyzer"]);
+        logger.LogInformation("Demo repository now references the analyzer at {Analyzer} (committed)", analyzer);
     }
 
     private static async Task GitAsync(string workingDirectory, CancellationToken cancellationToken, params string[] arguments)

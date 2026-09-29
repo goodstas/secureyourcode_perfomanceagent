@@ -29,6 +29,10 @@ public sealed class StatePaths
 
     public string DemoShopSource => Path.Combine(AppWorkspace, "test-assets", "demo-shop");
 
+    /// <summary>The Release build of the SecureYourCode analyzer that the demo repo references (plan §4.3).</summary>
+    public string AnalyzerAssembly => Path.Combine(
+        AppWorkspace, "src", "SecureYourCode.PerformanceAnalyzer", "bin", "Release", "netstandard2.0", "SecureYourCode.PerformanceAnalyzer.dll");
+
     public static StatePaths Resolve(SecureYourCodeOptions options)
     {
         var appWorkspace = string.IsNullOrWhiteSpace(options.AppWorkspace)

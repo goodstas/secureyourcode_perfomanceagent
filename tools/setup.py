@@ -118,6 +118,8 @@ def build_and_test() -> None:
     dotnet = tool("dotnet")
     check([dotnet, "build", REPO / "SecureYourCode.slnx"])
     check([dotnet, "test", REPO / "SecureYourCode.slnx", "--no-build"])
+    # The demo repo references the Release analyzer build; the host refuses to start without it.
+    check([dotnet, "build", REPO / "src" / "SecureYourCode.PerformanceAnalyzer", "-c", "Release"])
     check([dotnet, "build", REPO / "tools" / "copilot-smoke"])
 
 
