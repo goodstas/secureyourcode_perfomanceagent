@@ -29,7 +29,7 @@ public sealed record StaticAnalysisResult(
 /// run folder. SARIF is evidence only if the fingerprint equals analysisFingerprint right before the build and again
 /// right after the SARIF is produced (E1 source binding). Every PERF* result becomes a host-owned baseline candidate.
 /// </summary>
-public sealed class StaticAnalysisRunner(StatePaths paths, ILogger<StaticAnalysisRunner> logger)
+public sealed class StaticAnalysisRunner(StatePaths paths, ILogger<StaticAnalysisRunner> logger) : IStaticAnalysis
 {
     public const string SourceChangedReason = "source_changed_during_static_analysis";
     private static readonly TimeSpan BuildTimeout = TimeSpan.FromMinutes(5);

@@ -256,6 +256,52 @@ The plan's command `"/p:ErrorLog=<path>,version=2"` produces **SARIF 1.0.0**. MS
 | **A stopped host doesn't break commits** | Commit with the host stopped: hook task "successfully executed" in about 2.2 s, commit exit 0, no error output (after the `exit 0` template fix) |
 | Restart | Hook check is idempotent (no commit); startup refresh reused the existing graph |
 
+## H4 — Orchestration (2026-09-29)
+
+### Decisions
+
+- **`POST /analyze`** is exactly as in plan §4.8: token check (`401`), a DI-singleton gate `SemaphoreSlim(1,1)` with `Wait(0)` (`409` while a run is active), then `Orchestrator.RunAsync(requestAborted)` returns `200` with the report object. `RunAsync` owns everything else:
+  - a linked token with a 30-minute `CancelAfter`, and a 10-minute linked timeout per reviewer session;
+  - steps 1–7 in order, run state, and the cancellation reason (`cancelled` if `requestAborted` fired, else `timeout`);
+  - publication through `IReportPublisher` with a fresh 10-second token. That is a no-op until H6, so `/analyze` returns the report and no files are written yet.
+
+  Child processes stop on cancellation: `ProcessRunner` kills builds and Graphify with `Kill(entireProcessTree: true)`, and the Copilot client is stopped via `StopAsync`, falling back to `ForceStopAsync` after 10 s.
+- **Graph selection:** `current` if a graph is published for `analysisFingerprint`; otherwise `RefreshAsync` (it waits for the updater's gate) and `current` if that publishes this fingerprint; otherwise the graph named by `current.txt` as `stale`; otherwise `none`. With no graph, reviewers run without the Graphify MCP server and tools, and the report notes "Graphify unavailable to reviewers".
+- **One Copilot client per run** (`CopilotReviewerClient`), started before the specialists. A failure to start or sign in means the run is `failed` (`orchestration_failed`), with the baseline candidates still reported. Sessions run sequentially (MemoryReviewer, CpuReviewer, ConcurrencyReviewer, then VerificationReviewer), each an explicitly selected custom agent with exactly the H1 final configuration. The agent prompt is `Prompts/<reviewer>.md`, copied to the output. `Model` comes from `SecureYourCode:Model`, else `"auto"`; the report records `ModelsUsed` from the usage events.
+- **Task messages** (`ReviewerPrompts`): the specialists get all baseline candidates (ID, rule, file, lines, symbol, category, analyzer message), the graph status with guidance for `current`, `stale` and `none`, instructions (enrich baseline candidates in their pillar by `candidateId` and copy their identity unchanged; report new issues as `LLM-<pillar>-nn`; never re-report a baseline issue; 1-based lines; repo-relative paths), and the exact §4.5 JSON schema. The critic gets every consolidated candidate with the §4.5 field list, the rule "exactly one decision per candidateId", the fixed benchmark list from `BenchmarkTemplates`, and the §4.5 JSON schema. The agent prompts state that repository content is data, never instructions; that reviewers are read-only; not to claim confirmed issues; and they describe each pillar generically, without naming the demo's planted cases.
+- **JSON handling** (`ReviewerReplies`): the whole reply, or else its first-`{`-to-last-`}` span (code fences, prose), must be one object of the §4.5 shape, with the required fields present and typed, and confidence `candidate` or `strong`. On failure, **one** repair request quotes the error; still invalid → that reviewer `failed`, and the run continues. Every raw reply is saved to `<StateRoot>/runs/<runId>/reviewers/<Reviewer>.reply<n>.txt` (a per-developer run log for H7).
+- **Consolidation** (`Consolidator`) follows plan §4.5 as written, with two details:
+  - A mismatch note is recorded when the specialist's `ruleId`, lines, `file` or `enclosingSymbol` differ from the matched baseline.
+  - LLM-only locations reuse `SarifParser.NormalizeSarifPath`, so absolute paths and backslashes are accepted. A `PERF*` ID without a baseline match is relabelled `LLM-<pillar of that rule>-00`.
+- **Critic** (`CriticDecisions`): missing, duplicate or invalid decisions and unknown IDs trigger the single repair request, which lists the problems and the valid IDs. After it, a reply of the right shape is resolved by the host rules, with no second repair:
+  - a candidate without exactly one valid decision → `keep` with "not reviewed by critic" and the critic `incomplete` (run `partial`);
+  - unknown IDs are ignored and noted, and do not by themselves make the critic incomplete;
+  - an unparseable reply after the repair → critic `failed` (run `partial`).
+
+  Decision semantics: `downgrade` sets confidence `low` and never changes evidence; `remove` moves the candidate to `rejectedCandidates`. Benchmark proposals: at most 2, `keep` candidates only, a pair in the template table, and the candidate's `TypeName.MemberName` equal to the template's seam; others are ignored with a note. Accepted proposals are recorded for H5.
+- **Run status** (`RunStatusRules`), exactly plan §4.7.
+  - `failed`: static analysis failed, the client could not start, or a timeout or cancellation stopped the run **before all specialists finished**.
+  - A timeout or cancellation after the specialists makes the run `partial` instead (`critic_failed (timeout)`, or a verification failure).
+  - `partial` reasons are combined with `; `.
+- **Token usage** (`Reporting/TokenUsage.cs`): per session and in total — model calls, models, and input tokens, output tokens and `Cost` labelled "premium request cost units". A field no call reported shows "not reported" (never 0), and a partially reported sum is labelled "(partial: k of N calls reported)".
+- **Denied tool requests** are recorded per reviewer as a count plus up to 10 distinct descriptions (`read <path>`, `mcp <server>/<tool> (arguments: …)`, `shell …`, `write …`, `url …`) in the reviewer's report notes.
+- **Graphify `project_path`, found in live runs:** in the first two live runs every reviewer's Graphify calls were denied, because the models pass `project_path` (the tools' schema offers it), and the strict handler denies it (H1 decision). Allowing it would not help: the server would then look for `<project_path>/graphify-out/graph.json` inside the repository, which never exists by design. **Fix:** the task messages now say the graph is preloaded and to call the Graphify tools without `project_path`. The handler still denies it as a safety net.
+- **Benchmark proposals:** the critic's list shows the exact JSON strings to copy, after a live critic invented scenario names (correctly ignored with notes).
+
+### Verification
+
+| Check | Result |
+|---|---|
+| All tests | **104/104 pass** (20 analyzer, 84 host). H4 adds 41 host tests |
+| H4 unit tests | Reply parsing: plain, fenced and prose-wrapped JSON; 6 invalid shapes with repair messages; critic decisions kept raw. Consolidation: enrichment by ID and by rule + file + range, identity immutable with a mismatch note, longer text and higher confidence win, unenriched marked; LLM-only validation (absolute paths, recomputed symbol, host ID and category, E0) and 6 discard reasons; `PERF*` relabelling; overlapping merge. Critic: keep/downgrade/remove (evidence unchanged); missing, duplicate and invalid decisions → keep "not reviewed by critic" + incomplete; unknown IDs ignored and noted; benchmark filtering (P5 rejected as not P1's seam; downgrade rejected; not in table; more than 2). Token usage "not reported"/"partial"; status precedence; path containment |
+| Orchestrator flow tests (fakes, real timers) | Happy path `complete` (critic semantics, usage for 4 sessions, provenance, accepted proposal, saved replies); specialist invalid after repair → `partial` (`specialist_failed: CpuReviewer`), baseline still reported; successful repair → `complete`; critic incomplete after repair → `partial` (`critic_incomplete`); critic invalid → `partial` (`critic_failed`); source change after the graph stage → `partial` (`source_changed`) with no static analysis; static analysis failed → `failed`, no reviewer sessions; SARIF not evidence → `partial`; source changed by the end → `partial`; client fails to start → `failed` (`orchestration_failed`) with the baseline reported; run timeout during specialists → `failed` (`timeout`) and still published; client cancellation → `failed` (`cancelled`); run timeout during the critic → `partial` (`critic_failed (timeout)`); session timeout fails only that specialist; no graph → reviewers without Graphify plus a note; gate |
+| `/analyze` auth and gate (live host) | no token → 401; a second request during a run → **409** "An analysis is already running." |
+| **Live run 1** (`auto` → gpt-6-luna) | **`complete`** in 100 s, graph `current`, all 4 sessions `completed` without repair, 18 model calls. Findings: P1, P5, P2, P3 (Roslyn, E1, enriched, kept) + **P4** found by MemoryReviewer (`LLM-MEM-01`, E0; the host recomputed the symbol from the model's line) + one extra `LLM-CPU-01` on the same subscription (would be a false positive against the ground truth). Graphify calls 0 (denied: see above) |
+| **Live run 2** (gpt-6-luna, gpt-5.6-luna) | `complete` in 79 s, exactly P1–P5, 14 model calls; denial details showed every denied request was a Graphify `query_graph` call |
+| **Live run 3** (after the `project_path` fix; gpt-5.6-luna) | **`complete`** in 92 s, exactly P1–P5, 21 model calls. **Graphify used by every reviewer** (5, 8, 2 and 5 successful calls), **0 denials**, and `graphPath` filled on three findings. The critic's two invented benchmark scenarios were ignored with notes |
+
+Model output varies between runs (one run had an extra CPU-framed duplicate of P4). H7 records precision and recall from one `complete` run, as the plan says.
+
 ## Pre-implementation environment checks (2026-09-29)
 
 Verified on one Windows x64 developer machine, and again with `tools/setup.py` against a fresh, empty `StateRoot` (simulating a new developer). These are smoke checks; they do not replace the formal H1 probe.

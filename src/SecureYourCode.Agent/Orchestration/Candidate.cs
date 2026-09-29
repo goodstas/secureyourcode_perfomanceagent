@@ -4,8 +4,8 @@ using System.Text;
 namespace SecureYourCode.Agent.Orchestration;
 
 /// <summary>
-/// A finding candidate (plan §4.4). Identity and evidence fields are host-owned and immutable once created;
-/// specialists may only enrich the analysis fields (added in H4).
+/// A finding candidate (plan §4.4, §4.5). Identity and evidence fields are host-owned and immutable once created;
+/// specialists may only enrich the analysis fields (Mechanism, Trigger, GraphPath, Confidence, FixDirection).
 /// </summary>
 public sealed class Candidate
 {
@@ -31,6 +31,29 @@ public sealed class Candidate
 
     /// <summary>The analyzer's message for a Roslyn baseline candidate (host-owned).</summary>
     public string? DiagnosticMessage { get; init; }
+
+    public string? Mechanism { get; set; }
+
+    public string? Trigger { get; set; }
+
+    public string? GraphPath { get; set; }
+
+    public string? FixDirection { get; set; }
+
+    /// <summary>The specialists whose output contributed to this candidate.</summary>
+    public List<string> Reviewers { get; } = [];
+
+    public string? CriticDecision { get; set; }
+
+    public string? CriticRationale { get; set; }
+
+    public VerificationResult Verification { get; set; } = VerificationResult.NotRun("verification stage not implemented yet (H5)");
+}
+
+/// <summary>The outcome of host-owned benchmark verification for one candidate (plan §4.6).</summary>
+public sealed record VerificationResult(string Status, string? Template, string Reason)
+{
+    public static VerificationResult NotRun(string reason) => new("not_run", null, reason);
 }
 
 public static class Origins
@@ -44,6 +67,14 @@ public static class Confidences
     public const string Low = "low";
     public const string Candidate = "candidate";
     public const string Strong = "strong";
+
+    public static int Rank(string? confidence) => confidence switch
+    {
+        Strong => 2,
+        Candidate => 1,
+        Low => 0,
+        _ => -1,
+    };
 }
 
 public static class EvidenceLevels
@@ -51,6 +82,15 @@ public static class EvidenceLevels
     public const string E0 = "E0";
     public const string E1 = "E1";
     public const string E2 = "E2";
+}
+
+public static class Decisions
+{
+    public const string Keep = "keep";
+    public const string Downgrade = "downgrade";
+    public const string Remove = "remove";
+
+    public static bool IsValid(string? decision) => decision is Keep or Downgrade or Remove;
 }
 
 /// <summary>Host-owned category mapping from the rule ID (plan §4.4); never taken from a model.</summary>

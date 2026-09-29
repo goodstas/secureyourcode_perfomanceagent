@@ -6,6 +6,15 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <!-- PermissionDecision (the strict handler) is marked experimental in GitHub.Copilot.SDK 1.0.15 (H1). -->
+    <NoWarn>$(NoWarn);GHCP001</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="Prompts\*.md" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="GitHub.Copilot.SDK" Version="1.0.15" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.0.0" />
