@@ -1,0 +1,116 @@
+RECORDED RUN LOG - not a live run.
+SecureYourCode H7 demo run, recorded 2026-09-30 (UTC) by following demo/DEMO.md in PowerShell on Windows 11 (10.0.26200).
+Pinned: .NET SDK 10.0.201, GitHub.Copilot.SDK 1.0.15 (Copilot CLI runtime 1.0.89), graphifyy 0.9.71.
+The home folder is shown as ~ and the repository folder as <repo>. The access token was read into a variable and never printed.
+
+=== Step 1. Host console: dotnet run --project src/SecureYourCode.Agent ===
+(one continuous log; the lines after the first "Background graph refresh" come from steps 2 and 3)
+
+Using launch settings from src\SecureYourCode.Agent\Properties\launchSettings.json...
+Building...
+info: SecureYourCode.Agent[0]
+      OS: Microsoft Windows 10.0.26200 (X64); hook task template: task-runner.windows.json
+info: SecureYourCode.Agent[0]
+      AppWorkspace: <repo>
+info: SecureYourCode.Agent[0]
+      StateRoot: ~\.secureyourcode
+info: SecureYourCode.Agent.Infrastructure.DemoRepoMaterializer[0]
+      Demo repository present at ~\.secureyourcode\demo-repo
+info: SecureYourCode.Agent.Infrastructure.DemoRepoMaterializer[0]
+      Demo repository references the analyzer at <repo>\src\SecureYourCode.PerformanceAnalyzer\bin\Release\netstandard2.0\SecureYourCode.PerformanceAnalyzer.dll
+info: SecureYourCode.Agent.Graph.GitHookInstaller[0]
+      Graph-refresh hook installed in the demo repository
+info: Microsoft.Hosting.Lifetime[14]
+      Now listening on: http://127.0.0.1:9876
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: <repo>\src\SecureYourCode.Agent\bin\Debug\net10.0\
+info: SecureYourCode.Agent.Graph.GraphRefreshWorker[0]
+      Background graph refresh: Current 
+info: SecureYourCode.Agent.Graph.GraphifyUpdater[0]
+      Published graph 930ec7a9c340247e8ee0e770452ec5445072764522ebf9217d9e81c2188cb5bc-0.9.71
+info: SecureYourCode.Agent.Graph.GraphRefreshWorker[0]
+      Background graph refresh: Current 
+info: SecureYourCode.Agent.StaticAnalysis.StaticAnalysisRunner[0]
+      Static analysis: 4 PERF* diagnostics
+info: SecureYourCode.Agent.Verification.BenchmarkVerifier[0]
+      d36b9de2871f verified by RepositoryCallAmplification/OrderCustomerLookup (E2)
+info: SecureYourCode.Agent.Verification.BenchmarkVerifier[0]
+      89a0d93f86a5 verified by TaskFanOut/NotificationRecipients (E2)
+info: SecureYourCode.Agent.Reporting.FileReportPublisher[0]
+      Published reports to ~\.secureyourcode\reports\20260930-050822-ce1f_92544c1
+
+=== Step 2. Commit in the demo repo (second terminal) ===
+PS> cd ~/.secureyourcode/demo-repo
+PS> Add-Content demo-log.txt "demo <timestamp>"
+PS> git add demo-log.txt
+PS> git commit -m "Demo: trigger a graph refresh"
+[Husky] Loading tasks ...
+--------------------------------------------------
+[Husky] Preparing task 'graph-refresh'
+[Husky] Executing task 'graph-refresh' ...
+[Husky]  Successfully executed in 279ms
+--------------------------------------------------
+[main 92544c1] Demo: trigger a graph refresh
+ 1 file changed, 1 insertion(+)
+ create mode 100644 demo-log.txt
+
+The host then published graph 930ec7a9...-0.9.71 (see the host console above).
+
+=== Step 3. POST /analyze with the token: HTTP 200 after 102 s ===
+run id        20260930-050822-ce1f
+run status    complete
+graph status  current
+started       2026-09-30T05:08:22.0029258+00:00
+finished      2026-09-30T05:10:04.2252677+00:00
+models used   gpt-5.6-luna
+commit        92544c181db6253d81ed8bf457e23321e0c534c6 (dirty: false)
+fingerprint   930ec7a9c340247e8ee0e770452ec5445072764522ebf9217d9e81c2188cb5bc
+
+Final findings (critic keep or downgrade):
+PERF001     CPU & Amplification  Services/OrderSummaryService.cs     17  E2  candidate  keep
+PERF001     CPU & Amplification  Services/InvoiceService.cs          19  E1  low        downgrade
+PERF003     Concurrency          Services/NotificationService.cs     13  E2  candidate  keep
+PERF004     Memory & Allocation  Services/ReportCache.cs             28  E1  strong     keep
+LLM-MEM-01  Memory & Allocation  Services/OrderEvents.cs             18  E0  strong     keep
+
+Rejected by critic: 0
+
+Host benchmark verification (E2):
+PERF001 Services/OrderSummaryService.cs:17  RepositoryCallAmplification/OrderCustomerLookup  observations: n=10 -> 10, n=100 -> 100, n=1000 -> 1000
+PERF003 Services/NotificationService.cs:13  TaskFanOut/NotificationRecipients  observations: n=10 -> 10, n=100 -> 100, n=1000 -> 1000
+
+Reviewers:
+MemoryReviewer        completed  graphify available: true  graphify calls: 3  denied tool requests: 0
+CpuReviewer           completed  graphify available: true  graphify calls: 1  denied tool requests: 0
+ConcurrencyReviewer   completed  graphify available: true  graphify calls: 2  denied tool requests: 0
+VerificationReviewer  completed  graphify available: true  graphify calls: 5  denied tool requests: 0
+
+Token usage:
+MemoryReviewer        model calls:  4  input tokens:  36079  output tokens:  1937  cost: 4 premium request cost units
+CpuReviewer           model calls:  3  input tokens:  30033  output tokens:  1179  cost: 3 premium request cost units
+ConcurrencyReviewer   model calls:  5  input tokens:  37543  output tokens:  1175  cost: 5 premium request cost units
+VerificationReviewer  model calls:  4  input tokens:  34363  output tokens:  1829  cost: 4 premium request cost units
+total                 model calls: 16  input tokens: 138018  output tokens:  6120  cost: 16 premium request cost units
+
+Notes:
+- Benchmark proposal accepted: RepositoryCallAmplification/OrderCustomerLookup for d36b9de2871f.
+- Benchmark proposal accepted: TaskFanOut/NotificationRecipients for 89a0d93f86a5.
+- E2 means verified by a host-owned benchmark template bound to a demo seam; in the hackathon it applies to the demo project only.
+
+Without the token the same call returns HTTP 401.
+
+=== Step 4. Report files ===
+~/.secureyourcode/reports/20260930-050822-ce1f_92544c1/report.html and report.json (copied here as report.html with the RECORDED banner, and report.json unchanged)
+
+=== Step 5. powershell -ExecutionPolicy Bypass -File tools/evaluate.ps1 ===
+report     20260930-050822-ce1f_92544c1 (run status: complete)
+TP 5  FP 0  FN 0
+precision  1
+recall     1
+matches    P1=d36b9de2871f, P2=89a0d93f86a5, P3=059d11969b52, P4=3319c162676a, P5=4af182021fe5
+target     precision and recall >= 0.8 on a complete run: met
+written    ~\.secureyourcode\reports\20260930-050822-ce1f_92544c1\metrics.json

@@ -1,0 +1,365 @@
+{
+  "run": {
+    "runId": "20260930-050822-ce1f",
+    "startedAt": "2026-09-30T05:08:22.0029258+00:00",
+    "finishedAt": "2026-09-30T05:10:04.2252677+00:00",
+    "status": "complete",
+    "reason": null,
+    "graphStatus": "current",
+    "modelsUsed": [
+      "gpt-5.6-luna"
+    ]
+  },
+  "provenance": {
+    "commitSha": "92544c181db6253d81ed8bf457e23321e0c534c6",
+    "dirty": false,
+    "fingerprint": "930ec7a9c340247e8ee0e770452ec5445072764522ebf9217d9e81c2188cb5bc",
+    "graphFingerprint": "930ec7a9c340247e8ee0e770452ec5445072764522ebf9217d9e81c2188cb5bc"
+  },
+  "findings": [
+    {
+      "candidateId": "d36b9de2871f",
+      "origin": "roslyn",
+      "ruleId": "PERF001",
+      "file": "Services/OrderSummaryService.cs",
+      "startLine": 17,
+      "endLine": 17,
+      "enclosingSymbol": "OrderSummaryService.BuildSummariesAsync",
+      "category": "CPU \u0026 Amplification",
+      "confidence": "candidate",
+      "evidence": "E2",
+      "diagnosticMessage": "\u0027GetByIdAsync\u0027 is called inside a loop body (repository call, lower confidence): potential query amplification",
+      "mechanism": "Per-order repository lookup executes once for every order, including repeated lookups when multiple orders share the same CustomerId, creating N I/O operations instead of one batched lookup.",
+      "trigger": "A request to /orders/summaries containing many orders, especially orders with duplicate or numerous customer IDs.",
+      "graphPath": "OrderSummaryService.BuildSummariesAsync -\u003E ICustomerRepository.GetByIdAsync -\u003E CountingCustomerRepository.GetByIdAsync",
+      "fixDirection": "Collect distinct customer IDs, fetch them with GetByIdsAsync before the loop, and resolve customers from the resulting dictionary.",
+      "reviewers": [
+        "CpuReviewer"
+      ],
+      "criticDecision": "keep",
+      "criticRationale": "The /orders/summaries endpoint directly invokes the per-order GetByIdAsync path, with no batching or deduplication, so duplicate CustomerIds cause repeated repository calls.",
+      "verification": {
+        "status": "verified",
+        "template": "RepositoryCallAmplification/OrderCustomerLookup",
+        "reason": "verified by host benchmark template RepositoryCallAmplification/OrderCustomerLookup: value(n) \u2265 0.9\u00B7n for every n, and value(1000) \u2265 50\u00B7value(10)",
+        "observations": [
+          {
+            "n": 10,
+            "value": 10
+          },
+          {
+            "n": 100,
+            "value": 100
+          },
+          {
+            "n": 1000,
+            "value": 1000
+          }
+        ],
+        "previousEvidence": "E1"
+      }
+    },
+    {
+      "candidateId": "4af182021fe5",
+      "origin": "roslyn",
+      "ruleId": "PERF001",
+      "file": "Services/InvoiceService.cs",
+      "startLine": 19,
+      "endLine": 19,
+      "enclosingSymbol": "InvoiceService.BuildInvoiceLinesAsync",
+      "category": "CPU \u0026 Amplification",
+      "confidence": "low",
+      "evidence": "E1",
+      "diagnosticMessage": "\u0027GetByIdAsync\u0027 is called inside a loop body (repository call, lower confidence): potential query amplification",
+      "mechanism": "Product repository lookup runs inside the nested order-line loops, producing one sequential I/O operation per line and amplifying to the total number of lines across all orders; repeated ProductIds are fetched repeatedly.",
+      "trigger": "A request to /invoices containing many orders or orders with many lines, particularly when products recur across lines.",
+      "graphPath": "InvoiceService.BuildInvoiceLinesAsync -\u003E IProductRepository.GetByIdAsync -\u003E InMemoryProductRepository.GetByIdAsync",
+      "fixDirection": "Collect distinct product IDs, fetch products in a batch before iterating lines, and reuse the resulting lookup.",
+      "reviewers": [
+        "CpuReviewer"
+      ],
+      "criticDecision": "downgrade",
+      "criticRationale": "The nested loop performs one repository call per line without deduplication, but the current repository is an in-memory Task.FromResult implementation rather than actual I/O.",
+      "verification": {
+        "status": "not_run",
+        "template": null,
+        "reason": "no host benchmark template applies to this candidate",
+        "observations": null,
+        "previousEvidence": null
+      }
+    },
+    {
+      "candidateId": "89a0d93f86a5",
+      "origin": "roslyn",
+      "ruleId": "PERF003",
+      "file": "Services/NotificationService.cs",
+      "startLine": 13,
+      "endLine": 13,
+      "enclosingSymbol": "NotificationService.NotifyAllAsync",
+      "category": "Concurrency",
+      "confidence": "candidate",
+      "evidence": "E2",
+      "diagnosticMessage": "Task.WhenAll starts one task per element of \u0027recipients\u0027, so concurrency grows with input size: potential unbounded fan-out",
+      "mechanism": "Task.WhenAll enumerates recipients and starts one SendAsync operation per element without a concurrency limit, so active notification work grows with the input size.",
+      "trigger": "A POST to /notifications containing a large recipients list causes all sends to be initiated at once, potentially exhausting downstream sender capacity, connections, or resources.",
+      "graphPath": "Program.cs /notifications endpoint -\u003E NotificationService.NotifyAllAsync() -\u003E ISender.SendAsync() -\u003E CountingSender.SendAsync()",
+      "fixDirection": "Process recipients in sequential bounded batches or use a bounded concurrency gate such as SemaphoreSlim while preserving cancellation and exception propagation.",
+      "reviewers": [
+        "ConcurrencyReviewer"
+      ],
+      "criticDecision": "keep",
+      "criticRationale": "The /notifications endpoint uses unbounded Task.WhenAll over all recipients, while the separate batched endpoint does not constrain this path.",
+      "verification": {
+        "status": "verified",
+        "template": "TaskFanOut/NotificationRecipients",
+        "reason": "verified by host benchmark template TaskFanOut/NotificationRecipients: value(n) \u2265 0.9\u00B7n for every n",
+        "observations": [
+          {
+            "n": 10,
+            "value": 10
+          },
+          {
+            "n": 100,
+            "value": 100
+          },
+          {
+            "n": 1000,
+            "value": 1000
+          }
+        ],
+        "previousEvidence": "E1"
+      }
+    },
+    {
+      "candidateId": "059d11969b52",
+      "origin": "roslyn",
+      "ruleId": "PERF004",
+      "file": "Services/ReportCache.cs",
+      "startLine": 28,
+      "endLine": 28,
+      "enclosingSymbol": "ReportCache.GetOrAdd",
+      "category": "Memory \u0026 Allocation",
+      "confidence": "strong",
+      "evidence": "E1",
+      "diagnosticMessage": "Static collection field \u0027Reports\u0027 grows via Add and is never removed from or cleared in \u0027ReportCache\u0027: potential unbounded memory retention",
+      "mechanism": "The process-wide static Reports dictionary retains one Report object for every distinct key and has no eviction, size limit, removal, or clear operation.",
+      "trigger": "Requests to /reports/{key} using an unbounded stream of unique keys cause the dictionary and retained Report objects to grow for the lifetime of the process.",
+      "graphPath": null,
+      "fixDirection": "Replace the static dictionary with a bounded cache using expiration and/or a size limit, or explicitly remove entries according to the required retention policy.",
+      "reviewers": [
+        "MemoryReviewer"
+      ],
+      "criticDecision": "keep",
+      "criticRationale": "The reachable /reports/{key} endpoint inserts every new key into a process-wide dictionary with no eviction, removal, clear, or size limit.",
+      "verification": {
+        "status": "not_run",
+        "template": null,
+        "reason": "no host benchmark template applies to this candidate",
+        "observations": null,
+        "previousEvidence": null
+      }
+    },
+    {
+      "candidateId": "3319c162676a",
+      "origin": "specialist",
+      "ruleId": "LLM-MEM-01",
+      "file": "Services/OrderEvents.cs",
+      "startLine": 18,
+      "endLine": 18,
+      "enclosingSymbol": "OrderAuditHandler.OrderAuditHandler",
+      "category": "Memory \u0026 Allocation",
+      "confidence": "strong",
+      "evidence": "E0",
+      "diagnosticMessage": null,
+      "mechanism": "Each scoped OrderAuditHandler subscribes to the singleton OrderEventHub without unsubscribing, so the singleton event retains every handler instance and its delegate after the request scope ends.",
+      "trigger": "Repeated requests to /orders/placed create new scoped OrderAuditHandler instances; each subscription remains in OrderEventHub.OrderPlaced for the process lifetime.",
+      "graphPath": "POST /orders/placed -\u003E OrderEventHub.Publish -\u003E OrderEventHub.OrderPlaced -\u003E OrderAuditHandler.OnOrderPlaced",
+      "fixDirection": "Implement IDisposable on OrderAuditHandler and unsubscribe from OrderEventHub.OrderPlaced during scope disposal, or change the lifetime/subscription design so the publisher does not outlive the handler.",
+      "reviewers": [
+        "MemoryReviewer"
+      ],
+      "criticDecision": "keep",
+      "criticRationale": "Each scoped handler subscribes to the singleton OrderEventHub and has no unsubscribe or disposal path, so the singleton event retains handlers across /orders/placed scopes.",
+      "verification": {
+        "status": "not_run",
+        "template": null,
+        "reason": "no host benchmark template applies to this candidate",
+        "observations": null,
+        "previousEvidence": null
+      }
+    }
+  ],
+  "rejectedCandidates": [],
+  "reviewers": [
+    {
+      "reviewer": "MemoryReviewer",
+      "status": "completed",
+      "error": null,
+      "graphifyAvailable": true,
+      "graphifyCalls": 3,
+      "deniedToolRequests": 0,
+      "notes": []
+    },
+    {
+      "reviewer": "CpuReviewer",
+      "status": "completed",
+      "error": null,
+      "graphifyAvailable": true,
+      "graphifyCalls": 1,
+      "deniedToolRequests": 0,
+      "notes": []
+    },
+    {
+      "reviewer": "ConcurrencyReviewer",
+      "status": "completed",
+      "error": null,
+      "graphifyAvailable": true,
+      "graphifyCalls": 2,
+      "deniedToolRequests": 0,
+      "notes": []
+    },
+    {
+      "reviewer": "VerificationReviewer",
+      "status": "completed",
+      "error": null,
+      "graphifyAvailable": true,
+      "graphifyCalls": 5,
+      "deniedToolRequests": 0,
+      "notes": []
+    }
+  ],
+  "tokenUsage": {
+    "sessions": [
+      {
+        "session": "MemoryReviewer",
+        "modelCalls": 4,
+        "models": [
+          "gpt-5.6-luna"
+        ],
+        "inputTokens": {
+          "value": 36079,
+          "reportedCalls": 4,
+          "totalCalls": 4,
+          "display": "36079"
+        },
+        "outputTokens": {
+          "value": 1937,
+          "reportedCalls": 4,
+          "totalCalls": 4,
+          "display": "1937"
+        },
+        "cost": {
+          "value": 4,
+          "reportedCalls": 4,
+          "totalCalls": 4,
+          "display": "4 premium request cost units"
+        }
+      },
+      {
+        "session": "CpuReviewer",
+        "modelCalls": 3,
+        "models": [
+          "gpt-5.6-luna"
+        ],
+        "inputTokens": {
+          "value": 30033,
+          "reportedCalls": 3,
+          "totalCalls": 3,
+          "display": "30033"
+        },
+        "outputTokens": {
+          "value": 1179,
+          "reportedCalls": 3,
+          "totalCalls": 3,
+          "display": "1179"
+        },
+        "cost": {
+          "value": 3,
+          "reportedCalls": 3,
+          "totalCalls": 3,
+          "display": "3 premium request cost units"
+        }
+      },
+      {
+        "session": "ConcurrencyReviewer",
+        "modelCalls": 5,
+        "models": [
+          "gpt-5.6-luna"
+        ],
+        "inputTokens": {
+          "value": 37543,
+          "reportedCalls": 5,
+          "totalCalls": 5,
+          "display": "37543"
+        },
+        "outputTokens": {
+          "value": 1175,
+          "reportedCalls": 5,
+          "totalCalls": 5,
+          "display": "1175"
+        },
+        "cost": {
+          "value": 5,
+          "reportedCalls": 5,
+          "totalCalls": 5,
+          "display": "5 premium request cost units"
+        }
+      },
+      {
+        "session": "VerificationReviewer",
+        "modelCalls": 4,
+        "models": [
+          "gpt-5.6-luna"
+        ],
+        "inputTokens": {
+          "value": 34363,
+          "reportedCalls": 4,
+          "totalCalls": 4,
+          "display": "34363"
+        },
+        "outputTokens": {
+          "value": 1829,
+          "reportedCalls": 4,
+          "totalCalls": 4,
+          "display": "1829"
+        },
+        "cost": {
+          "value": 4,
+          "reportedCalls": 4,
+          "totalCalls": 4,
+          "display": "4 premium request cost units"
+        }
+      }
+    ],
+    "total": {
+      "session": "total",
+      "modelCalls": 16,
+      "models": [
+        "gpt-5.6-luna"
+      ],
+      "inputTokens": {
+        "value": 138018,
+        "reportedCalls": 16,
+        "totalCalls": 16,
+        "display": "138018"
+      },
+      "outputTokens": {
+        "value": 6120,
+        "reportedCalls": 16,
+        "totalCalls": 16,
+        "display": "6120"
+      },
+      "cost": {
+        "value": 16,
+        "reportedCalls": 16,
+        "totalCalls": 16,
+        "display": "16 premium request cost units"
+      }
+    }
+  },
+  "notes": [
+    "Benchmark proposal accepted: RepositoryCallAmplification/OrderCustomerLookup for d36b9de2871f.",
+    "Benchmark proposal accepted: TaskFanOut/NotificationRecipients for 89a0d93f86a5.",
+    "E2 means verified by a host-owned benchmark template bound to a demo seam; in the hackathon it applies to the demo project only."
+  ]
+}

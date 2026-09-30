@@ -44,12 +44,22 @@ It listens on `http://127.0.0.1:9876` only. On first start it creates your acces
 
 The host also installs a Husky.Net post-commit hook into the demo repo (never into this repository). Each commit there tells the running host to refresh the code graph (`POST /git-post-commit`, token-protected); if the host is stopped, commits still complete normally. Graphs are published under `~/.secureyourcode/graphs/`. To refresh the demo repo after `test-assets/demo-shop` changes, stop the host, delete `~/.secureyourcode/demo-repo`, and start it again.
 
+### Analyze, evaluate, demo
+
+With the host running, `POST http://127.0.0.1:9876/analyze` with the header `X-SecureYourCode-Token: <contents of ~/.secureyourcode/access-token>` runs the full analysis (about 2 minutes) and publishes `report.json` and `report.html` under `~/.secureyourcode/reports/` (`latest.txt` names the newest folder). Score a report against `test-assets/ground-truth.json` with:
+
+```bash
+sh tools/evaluate.sh
+```
+
+or on Windows `powershell -ExecutionPolicy Bypass -File tools/evaluate.ps1`. Both write `metrics.json` into the report folder. The step-by-step demo, with PowerShell and bash commands, is [demo/DEMO.md](demo/DEMO.md); `demo/fallback/` is a recorded run, to be shown only if the live call fails.
+
 ### Where things live
 
 | What | Where | Shared? |
 |---|---|---|
 | Source, docs, hook templates, demo project | this repository | yes, via git |
 | Graphify venv, Copilot CLI, Copilot sign-in state, graphs, reports, demo repo, access token | `~/.secureyourcode/` (override with the `SECUREYOURCODE_STATE_ROOT` environment variable) | no, per developer |
-| Copilot credentials | your OS credential store | no |
+| Copilot credentials | `~/.secureyourcode/copilot` (the plaintext config written at sign-in; treat it like a password) | no |
 
 Never commit tokens, `~/.secureyourcode` contents, or absolute paths from your machine.

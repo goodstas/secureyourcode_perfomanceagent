@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SecureYourCode.Agent\SecureYourCode.Agent.csproj" />
+    <ProjectReference Include="..\..\tools\evaluate\evaluate.csproj" />
   </ItemGroup>
 
 </Project>

@@ -1,0 +1,36 @@
+{
+  "runId": "20260930-050822-ce1f",
+  "runStatus": "complete",
+  "countsTowardTarget": true,
+  "truePositives": 5,
+  "falsePositives": 0,
+  "falseNegatives": 0,
+  "precision": 1,
+  "recall": 1,
+  "targetMet": true,
+  "matches": [
+    {
+      "caseId": "P1",
+      "candidateId": "d36b9de2871f"
+    },
+    {
+      "caseId": "P2",
+      "candidateId": "89a0d93f86a5"
+    },
+    {
+      "caseId": "P3",
+      "candidateId": "059d11969b52"
+    },
+    {
+      "caseId": "P4",
+      "candidateId": "3319c162676a"
+    },
+    {
+      "caseId": "P5",
+      "candidateId": "4af182021fe5"
+    }
+  ],
+  "falsePositiveFindings": [],
+  "falseNegativeCases": [],
+  "notes": []
+}

@@ -1,0 +1,7 @@
+# Shell scripts must keep LF endings on every checkout (Windows developers with core.autocrlf=true run them from Git Bash too).
+*.sh text eol=lf
+hook-templates/post-commit text eol=lf
+
+# The recorded fallback artifacts are stored verbatim (byte-for-byte copies of a published report), never normalized.
+demo/fallback/report.json -text
+demo/fallback/metrics.json -text

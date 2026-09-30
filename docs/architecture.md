@@ -37,9 +37,9 @@ Per-developer setup is automated by `tools/setup.py`; see `README.md`.
 
 - **StateRoot is per developer.** Default `<user home>/.secureyourcode`, override `SECUREYOURCODE_STATE_ROOT`. The host resolves it the same way at runtime; `appsettings.json` never contains an absolute path.
 - **OS.** Plan §2 assumes one demo machine's OS. Team members may use different OSes, so the host detects the OS at runtime and installs the matching hook template (`task-runner.windows.json` or `task-runner.unix.json`); both templates are maintained. The OS of the machine used for the recorded live demo run is noted in the H7 record.
-- **Copilot accounts.** Each developer signs in with their own GitHub account (`python tools/setup.py --login`); credentials stay in the OS credential store and the sign-in is scoped to that developer's `<StateRoot>/copilot`. Model default is `"auto"`, the only model guaranteed on every plan.
+- **Copilot accounts.** Each developer signs in with their own GitHub account (`python tools/setup.py --login`); the sign-in is scoped to that developer's `<StateRoot>/copilot` (since H1 stored there as the CLI's plaintext config, because isolated mode ignores the OS keychain; see H1 › Client isolation mechanism). Model default is `"auto"`, the only model guaranteed on every plan.
 - **Analyzer reference in the demo repo.** The `<Analyzer Include=...>` path (plan §4.3) is absolute and machine-specific, so it is written only into each developer's materialized demo repo under `StateRoot`, never into `test-assets/demo-shop`.
-- **Environment checks** live in `tools/setup.py` and `tools/copilot-smoke/` (a small console app, not part of `SecureYourCode.slnx` and not app code).
+- **Environment checks** live in `tools/setup.py` and `tools/copilot-smoke/` (a small console app, not part of `SecureYourCode.slnx` and not app code). `tools/evaluate/` (H7) is in the solution, because the host tests reference it.
 - Solution file uses the .NET 10 default `SecureYourCode.slnx`.
 - The plan file was moved to `docs/IMPLEMENTATION_PLAN_HACKATHON_v1.5.md`, where `AGENTS.md` expects it. `docs/IMPLEMENTATION_PLAN_FULL.md` is not in the repository; the hackathon plan is self-sufficient.
 
@@ -373,6 +373,53 @@ Model output varies between runs (one run had an extra CPU-framed duplicate of P
 | **Live `/analyze`** (gpt-6-luna) | `complete` in 101 s, HTTP 200. Published `reports/<runId>_1656394/` with `report.json` and `report.html`; `latest.txt` points to it; no `.tmp` folder; the HTTP body and `report.json` describe the same run. P1 **E2** (required benchmark) and P3 **E2** (accepted `CollectionGrowth/ReportCache` proposal, a first in live runs); P2 and P5 E1; P4 E0 |
 | **HTML viewed** | The page contains no `<script`, `src=`, `href=`, `@import` or `url(` (self-contained). The browser pane does not open `file://` URLs, so the file was served unchanged from a throwaway `127.0.0.1` static server and inspected: header, Run, Provenance, Token usage, Reviewers, the three category groups with E2 (green), E1 (blue) and E0 (grey) badges and Roslyn/AI labels, an expanded E2 finding (execution path from Graphify, critic rationale, verification with observations 10/100/1000, fix direction), *Low-confidence candidates* (empty), a collapsed *Rejected by critic*, and Notes. All rendered correctly |
 
+## H7 — Evaluation + demo (2026-09-30)
+
+### Decisions
+
+- **`tools/evaluate`.** The plan names "`evaluate.ps1` or `evaluate.sh`". The team uses more than one OS, so both exist, as thin wrappers around one small .NET console project, `tools/evaluate/` (`Evaluator.cs` + `Program.cs`). The matching rules therefore live in one tested place instead of two script dialects.
+  - Unlike the environment-check tools, it is part of `SecureYourCode.slnx`, because the host test project references it for its unit tests. The host itself does not reference it.
+  - **Input:** no argument → the latest report (`<StateRoot>/reports/<latest.txt>`, with StateRoot resolved like the host: `SECUREYOURCODE_STATE_ROOT`, else `<user home>/.secureyourcode`); or a report folder or `report.json` path.
+  - **Ground truth:** `<AppWorkspace>/test-assets/ground-truth.json`, found like the host finds AppWorkspace.
+  - **Exit codes:** 0 evaluated (the numbers are printed and written whether or not the target is met), 1 error, 2 usage.
+- **Semantics** (plan §5):
+  - Only `findings` whose critic decision is `keep` or `downgrade` are read. `rejectedCandidates` are never read, and benchmark proposals are not findings.
+  - A match is the same canonical file, an overlapping inclusive line range and the same category. Rule IDs are not part of the §5 match rule (P4's ground truth says `LLM-MEM`; the host names specialist findings `LLM-MEM-nn`).
+  - Matching is one-to-one: a maximum bipartite matching (augmenting paths), so the order of findings can never cost a true positive, and one finding never satisfies two cases.
+  - TP = matched positive cases; FN = unmatched positive cases; FP = every unmatched final finding, with a note naming the negative case it falls in, if any. Negative cases never produce FNs.
+  - Precision and recall are rounded to 4 decimals, or `"undefined"` when the denominator is 0. The target is met only by a `complete` run with both ≥ 0.8 (inclusive); undefined never meets it. A `partial`/`failed` run is recorded with `countsTowardTarget: false`.
+- **`metrics.json`** is written into the report folder (temp file + rename) with `runId`, `runStatus`, `countsTowardTarget`, `truePositives`, `falsePositives`, `falseNegatives`, `precision`, `recall`, `targetMet`, `matches` (case → candidate ID), `falsePositiveFindings`, `falseNegativeCases` and `notes`.
+- **`demo/DEMO.md`** gives PowerShell and bash variants of each step. Step 2 commits a notes file (`demo-log.txt`) to the demo repo: this changes the fingerprint, so a new graph is extracted, without touching the demo cases or their line numbers.
+- **`demo/fallback/`** comes from the H7 live run.
+  - `report.json` and `metrics.json` are byte-for-byte copies.
+  - `report.html` is unchanged except for a red *RECORDED FALLBACK* banner after `<body>` and a "RECORDED —" title prefix.
+  - `run-log.txt` holds the host console and the step commands and outputs, with the home folder as `~` and the repository as `<repo>`.
+  - `README.md` labels it all as recorded and names the run.
+  - All files were scanned for personal paths, names and tokens: none.
+- **`.gitattributes`**: `*.sh` and `hook-templates/post-commit` stay LF on every checkout, since Windows developers with `core.autocrlf=true` also run `evaluate.sh` from Git Bash. `demo/fallback/report.json` and `metrics.json` are `-text`: the host writes CRLF on Windows, and without this, git would normalize them, so they would no longer be byte-for-byte copies (verified: the committed blobs hash-equal the published files).
+- **Cross-pillar duplicate (open item from H4): decided — no change.** The measurements:
+  - The H7 run scored precision 1.0 and recall 1.0; the H6 run, scored with the same tool, also 1.0 / 1.0.
+  - No live run after H4 run 1 reproduced the duplicate (H4 runs 2–4, H5, H6, H7).
+  - Its worst observed case, H4 run 1, would score 5/6 ≈ 0.83, still above the target.
+
+  Changing the prompts now would tune them against known answers without a measured need, and would invalidate the recorded runs. It stays a known limitation, with the generic prompt rule below as a v2 candidate.
+- The recorded live demo run was made on **Windows 11 x64** (see the Team decisions on OS).
+
+**No fallback needed.**
+
+### Verification
+
+| Check | Result |
+|---|---|
+| All tests | **141/141 pass** (20 analyzer, 121 host). H7 adds 10 evaluator tests |
+| Evaluator unit tests | The ground-truth file still has exactly its H0 content. Reports built with the host's own `Report` types and `ReportJson` serialization: exactly P1–P5 (with P5 downgraded) → 5/0/0, 1.0/1.0, target met, no FN from the four negatives; rejected candidates on P2 and on N1 ignored → 4/0/1, recall 0.8 meets the target (inclusive); a CPU-category copy of P4 plus a second Memory finding on P4 → 2 FPs ("matches no positive case"), precision 0.7143; a finding in N1 → FP with "is in negative case N1"; maximum matching (a greedy order would lose case B) and one finding never matching two cases; same file / touching lines / category rules; zero findings → precision `"undefined"` in `metrics.json`, recall 0, target not met; `partial` and `failed` runs recorded but not counted |
+| `tools/evaluate` CLI | `evaluate.ps1` (no argument → latest report) and `evaluate.sh` (Git Bash, with a `report.json` path) on the H6 and H7 reports. Errors: missing report → 1; two arguments → usage, 2; relative `SECUREYOURCODE_STATE_ROOT` → 1; a StateRoot without reports → 1 with "run /analyze first" |
+| **Live demo run** (`demo/DEMO.md` followed verbatim in PowerShell; `auto` → gpt-5.6-luna) | Host started; the step-2 commit returned at once and the hook led to `Published graph <fingerprint>-0.9.71`. `/analyze` → **`complete`** in 102 s, graph `current`, 16 model calls, 16 premium request cost units. **Exactly P1–P5**: P1 **E2** (required benchmark, 10/100/1000 repository calls), P2 **E2** (accepted `TaskFanOut` proposal), P3 E1, P4 E0 (MemoryReviewer), P5 E1 downgraded to low confidence (the critic noted the in-memory repository). Nothing rejected. Graphify used by every reviewer (3, 1, 2 and 5 calls), 0 denials. Without the token → 401. Demo repo clean afterwards |
+| **Metrics** (`metrics.json` of that run) | **TP 5, FP 0, FN 0, precision 1.0, recall 1.0: target met** on a `complete` run. The H6 run scores the same |
+| Bash variants (Git Bash on Windows) | Step-2 commit → hook → new graph published; `curl` with a wrong token → 401; `curl` with the step-3 token expansion against the cheap `/git-post-commit` → 202 (not `/analyze`, to avoid a second paid run); the step-4 path resolves. macOS `open` / Linux `xdg-open` not run (no such machine) |
+| Fallback | Rendered from a throwaway `127.0.0.1` static server: banner and title show RECORDED; findings, E2 badges and sections intact. No personal data |
+| `tools/setup.py` | Re-run passes with the new project in the solution |
+
 ## Pre-implementation environment checks (2026-09-29)
 
 Verified on one Windows x64 developer machine, and again with `tools/setup.py` against a fresh, empty `StateRoot` (simulating a new developer). These are smoke checks; they do not replace the formal H1 probe.
@@ -402,5 +449,5 @@ SDK API notes (to be confirmed in H1):
 
 ## Open items
 
-- **Cross-pillar duplicate findings (found in H4 live run 1; decision deferred to H7 by the team).** CpuReviewer reported P4's mechanism (a scoped handler subscribed to a singleton hub and never unsubscribed) a second time as `LLM-CPU-01` at `Services/OrderEvents.cs:17`, framed as CPU cost ("each publish invokes every retained handler"), while MemoryReviewer reported it as `LLM-MEM-01` at line 9. The critic kept both. Its duplicate rule covers "the same mechanism at the same location", and these differed in line and category. Consolidation merges only LLM-only findings with the same file, enclosing symbol **and category** (plan §4.5). Against the ground truth, the CPU copy is a false positive (P4 is category Memory): run 1 would score precision 5/6 ≈ 0.83, recall 5/5. Runs 2–4 did not produce it, which is model variance, not a fix. Nothing was changed, to avoid tuning prompts against the known answers. Candidate generic fix if H7's measured run shows it: a specialist-prompt rule "report only issues whose root cause belongs to your pillar; do not restate another pillar's issue".
+- **Cross-pillar duplicate findings: decided in H7, no change (see H7 › Decisions); kept here as a known limitation.** Found in H4 live run 1: CpuReviewer reported P4's mechanism (a scoped handler subscribed to a singleton hub and never unsubscribed) a second time as `LLM-CPU-01` at `Services/OrderEvents.cs:17`, framed as CPU cost ("each publish invokes every retained handler"), while MemoryReviewer reported it as `LLM-MEM-01` at line 9. The critic kept both. Its duplicate rule covers "the same mechanism at the same location", and these differed in line and category. Consolidation merges only LLM-only findings with the same file, enclosing symbol **and category** (plan §4.5). Against the ground truth, the CPU copy is a false positive (P4 is category Memory): run 1 would score precision 5/6 ≈ 0.83, recall 5/5. Runs 2–4 did not produce it, which is model variance, not a fix. Nothing was changed, to avoid tuning prompts against the known answers. Candidate generic fix for v2: a specialist-prompt rule "report only issues whose root cause belongs to your pillar; do not restate another pillar's issue".
 - Copilot usage per plan: GitHub docs (checked 2026-09-29) say all plans include Copilot CLI and Free allows auto model selection only. Free has a small allowance that H1 plus repeated `/analyze` runs (4 sessions each, plus repair prompts) can exhaust, so the developer running H1 and the live demo should use a paid plan.
