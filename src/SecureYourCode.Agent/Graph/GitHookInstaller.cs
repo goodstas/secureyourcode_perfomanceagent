@@ -33,14 +33,14 @@ public sealed class GitHookInstaller(StatePaths paths, LocalAccessToken token, I
             }
 
             var command = ManifestHuskyVersion(manifest) is null ? "install" : "update";
-            await DotnetAsync(cancellationToken, "tool", command, "husky", "--version", HuskyVersion);
+            await DotnetAsync(cancellationToken, ["tool", command, "husky", "--version", HuskyVersion, .. NuGetConfigArguments()]);
         }
 
         var hooksPath = (await Git.TryRunAsync(repo, cancellationToken, "config", "--local", "core.hooksPath")).StandardOutput.Trim();
         if (hooksPath != ".husky" || !File.Exists(Path.Combine(repo, ".husky", "_", "husky.sh")))
         {
             repairs.Add("husky install");
-            await DotnetAsync(cancellationToken, "tool", "restore");
+            await DotnetAsync(cancellationToken, ["tool", "restore", .. NuGetConfigArguments()]);
             await DotnetAsync(cancellationToken, "husky", "install");
         }
 
@@ -81,6 +81,29 @@ public sealed class GitHookInstaller(StatePaths paths, LocalAccessToken token, I
 
         logger.LogInformation("Graph-refresh hook installed or repaired ({Repairs}){Committed}",
             string.Join(", ", repairs), staged.ExitCode == 1 ? "; committed" : "");
+    }
+
+    /// <summary>
+    /// H8: with a configured NuGet source (air-gapped), the tool commands use a host-written nuget.config under StateRoot
+    /// that names only that source, so nothing tries to reach nuget.org. Otherwise the machine's NuGet configuration applies.
+    /// </summary>
+    private string[] NuGetConfigArguments()
+    {
+        if (paths.NuGetSource is null)
+        {
+            return [];
+        }
+
+        var content = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<configuration>\n  <packageSources>\n    <clear />\n" +
+            $"    <add key=\"secureyourcode\" value=\"{System.Security.SecurityElement.Escape(paths.NuGetSource)}\" />\n" +
+            "  </packageSources>\n</configuration>\n";
+        if (!File.Exists(paths.NuGetConfigFile) || File.ReadAllText(paths.NuGetConfigFile) != content)
+        {
+            Directory.CreateDirectory(paths.StateRoot);
+            File.WriteAllText(paths.NuGetConfigFile, content);
+        }
+
+        return ["--configfile", paths.NuGetConfigFile];
     }
 
     private async Task<string> ReadTemplateAsync(string name, CancellationToken cancellationToken)

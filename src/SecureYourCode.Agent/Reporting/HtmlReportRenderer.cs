@@ -86,6 +86,7 @@ public static class HtmlReportRenderer
         Row(html, "Finished", report.Run.FinishedAt?.ToString("u", CultureInfo.InvariantCulture) ?? "not finished");
         Row(html, "Models used", report.Run.ModelsUsed.Count == 0 ? "none" : string.Join(", ", report.Run.ModelsUsed));
         html.Append("</table><h2>Provenance</h2><table>");
+        Row(html, "LLM backend", report.Provenance.LlmBackend ?? "unknown");
         Row(html, "Commit", report.Provenance.CommitSha ?? "unknown");
         Row(html, "Dirty working tree", report.Provenance.Dirty is { } dirty ? (dirty ? "yes" : "no") : "unknown");
         Row(html, "Source fingerprint", report.Provenance.Fingerprint ?? "unknown");

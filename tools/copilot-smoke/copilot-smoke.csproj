@@ -12,6 +12,8 @@
 
   <ItemGroup>
     <PackageReference Include="GitHub.Copilot.SDK" Version="1.0.15" />
+    <!-- Reuses the host's configuration model (SecureYourCodeOptions, StatePaths, LlmSettings) so the check runs in exactly the configured mode (H8). -->
+    <ProjectReference Include="..\..\src\SecureYourCode.Agent\SecureYourCode.Agent.csproj" />
   </ItemGroup>
 
 </Project>

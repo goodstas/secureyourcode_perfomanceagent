@@ -5,17 +5,19 @@ using SecureYourCode.Agent.Reporting;
 
 namespace SecureYourCode.Agent.Orchestration;
 
-public sealed class CopilotReviewerClientFactory(StatePaths paths, SecureYourCodeOptions options, PromptLibrary prompts) : IReviewerClientFactory
+public sealed class CopilotReviewerClientFactory(StatePaths paths, LlmSettings llm, PromptLibrary prompts) : IReviewerClientFactory
 {
-    public IReviewerClient Create() => new CopilotReviewerClient(paths, options, prompts);
+    public IReviewerClient Create() => new CopilotReviewerClient(paths, llm, prompts);
 }
 
 /// <summary>
 /// The final configuration proven in H1: isolated (Empty) client mode with its own COPILOT_HOME, session working directory
 /// RepoPath, the three Graphify tool-name lists, explicit isolation options, a host-written environment context with the
 /// custom-instructions section removed, one explicitly selected custom agent, and the strict permission handler.
+/// In ApiKey mode (H8) the same runtime and session configuration are used, but every session carries a whole-session
+/// BYOK provider (the configured endpoint and key), and no GitHub sign-in is required or checked.
 /// </summary>
-public sealed class CopilotReviewerClient(StatePaths paths, SecureYourCodeOptions options, PromptLibrary prompts) : IReviewerClient
+public sealed class CopilotReviewerClient(StatePaths paths, LlmSettings llm, PromptLibrary prompts) : IReviewerClient
 {
     private static readonly string[] ReadOnlyTools = ["view", "grep", "glob"];
     private CopilotClient? _client;
@@ -32,13 +34,32 @@ public sealed class CopilotReviewerClient(StatePaths paths, SecureYourCodeOption
             WorkingDirectory = NeutralDirectory,
         });
         await _client.StartAsync(cancellationToken);
-        var auth = await _client.GetAuthStatusAsync(cancellationToken);
-        if (auth.IsAuthenticated != true)
+        if (llm.Mode == LlmMode.Copilot)
         {
-            throw new InvalidOperationException(
-                "Copilot is not signed in for the isolated client; run 'python tools/setup.py --login' (see README.md).");
+            var auth = await _client.GetAuthStatusAsync(cancellationToken);
+            if (auth.IsAuthenticated != true)
+            {
+                throw new InvalidOperationException(
+                    "Copilot is not signed in for the isolated client; run 'python tools/setup.py --login' (see README.md).");
+            }
         }
     }
+
+    /// <summary>The SDK provider configuration for ApiKey mode: the endpoint, the key, and the model names (H8).</summary>
+    public static ProviderConfig ToProviderConfig(ResolvedProvider provider) => new()
+    {
+        Type = provider.Type,
+        BaseUrl = provider.BaseUrl,
+        WireApi = provider.WireApi,
+        WireModel = provider.WireModel,
+        ModelId = provider.ModelId,
+        ApiKey = provider.UseBearerToken ? null : provider.ApiKey,
+        BearerToken = provider.UseBearerToken ? provider.ApiKey : null,
+        Headers = provider.Headers is null ? null : new Dictionary<string, string>(provider.Headers),
+        Azure = provider.AzureApiVersion is null ? null : new AzureOptions { ApiVersion = provider.AzureApiVersion },
+        MaxPromptTokens = provider.MaxPromptTokens,
+        MaxOutputTokens = provider.MaxOutputTokens,
+    };
 
     public async Task<IReviewerSession> CreateSessionAsync(ReviewerDefinition reviewer, PublishedGraph? graph, CancellationToken cancellationToken)
     {
@@ -48,7 +69,8 @@ public sealed class CopilotReviewerClient(StatePaths paths, SecureYourCodeOption
         var session = new CopilotReviewerSession(handler);
         var config = new SessionConfig
         {
-            Model = string.IsNullOrWhiteSpace(options.Model) ? "auto" : options.Model,
+            Model = llm.Mode == LlmMode.ApiKey ? llm.Provider!.ModelId : llm.CopilotModel,
+            Provider = llm.Mode == LlmMode.ApiKey ? ToProviderConfig(llm.Provider!) : null,
             WorkingDirectory = paths.RepoPath,
             AvailableTools = [.. ReadOnlyTools, .. graphTools.Select(t => $"mcp:{StrictPermissionHandler.GraphifyServerKey}-{t}")],
             McpServers = graph is null ? null : new Dictionary<string, McpServerConfig>

@@ -4,12 +4,20 @@ namespace SecureYourCode.Agent.Infrastructure;
 public sealed class StatePaths
 {
     public const string StateRootEnvironmentVariable = "SECUREYOURCODE_STATE_ROOT";
+    public const string NuGetSourceEnvironmentVariable = "SECUREYOURCODE_NUGET_SOURCE";
     private const string SolutionFileName = "SecureYourCode.slnx";
 
-    private StatePaths(string appWorkspace, string stateRoot)
+    private StatePaths(string appWorkspace, string stateRoot, string? graphifyPython, string? graphifyCli, string? nuGetSource)
     {
         AppWorkspace = appWorkspace;
         StateRoot = stateRoot;
+        NuGetSource = nuGetSource;
+        GraphifyPython = graphifyPython ?? (OperatingSystem.IsWindows()
+            ? Path.Combine(stateRoot, "graphify-venv", "Scripts", "python.exe")
+            : Path.Combine(stateRoot, "graphify-venv", "bin", "python"));
+        GraphifyCli = graphifyCli ?? (OperatingSystem.IsWindows()
+            ? Path.Combine(stateRoot, "graphify-venv", "Scripts", "graphify.exe")
+            : Path.Combine(stateRoot, "graphify-venv", "bin", "graphify"));
     }
 
     public string AppWorkspace { get; }
@@ -21,15 +29,19 @@ public sealed class StatePaths
 
     public string AccessTokenFile => Path.Combine(StateRoot, "access-token");
 
+    /// <summary>The NuGet source for tool installs in the demo repo (SecureYourCode:NuGetSource or SECUREYOURCODE_NUGET_SOURCE), if any (H8).</summary>
+    public string? NuGetSource { get; }
+
+    /// <summary>A NuGet configuration naming only <see cref="NuGetSource"/>, written by the host under StateRoot when a source is configured.</summary>
+    public string NuGetConfigFile => Path.Combine(StateRoot, "nuget.config");
+
     public string CopilotDirectory => Path.Combine(StateRoot, "copilot");
 
-    public string GraphifyPython => OperatingSystem.IsWindows()
-        ? Path.Combine(StateRoot, "graphify-venv", "Scripts", "python.exe")
-        : Path.Combine(StateRoot, "graphify-venv", "bin", "python");
+    /// <summary>The interpreter with graphifyy[mcp]: SecureYourCode:Graphify:Python, otherwise the venv under StateRoot (H8).</summary>
+    public string GraphifyPython { get; }
 
-    public string GraphifyCli => OperatingSystem.IsWindows()
-        ? Path.Combine(StateRoot, "graphify-venv", "Scripts", "graphify.exe")
-        : Path.Combine(StateRoot, "graphify-venv", "bin", "graphify");
+    /// <summary>The graphify CLI: SecureYourCode:Graphify:Cli, otherwise the venv under StateRoot (H8).</summary>
+    public string GraphifyCli { get; }
 
     /// <summary>Published graphs, temp extraction folders and current.txt (plan §4.1).</summary>
     public string GraphsDirectory => Path.Combine(StateRoot, "graphs");
@@ -75,7 +87,24 @@ public sealed class StatePaths
                 $"StateRoot '{stateRoot}' and AppWorkspace '{appWorkspace}' must not contain each other.");
         }
 
-        return new StatePaths(appWorkspace, stateRoot);
+        var graphify = options.Graphify ?? new GraphifyOptions();
+        var graphifyPython = string.IsNullOrWhiteSpace(graphify.Python) ? null : RequireAbsolute(graphify.Python, "SecureYourCode:Graphify:Python");
+        var graphifyCli = string.IsNullOrWhiteSpace(graphify.Cli) ? null : RequireAbsolute(graphify.Cli, "SecureYourCode:Graphify:Cli");
+        if ((graphifyPython is null) != (graphifyCli is null))
+        {
+            throw new InvalidOperationException("SecureYourCode:Graphify:Python and SecureYourCode:Graphify:Cli must be set together (both, or neither).");
+        }
+
+        var configuredNuGetSource = !string.IsNullOrWhiteSpace(options.NuGetSource)
+            ? options.NuGetSource
+            : Environment.GetEnvironmentVariable(NuGetSourceEnvironmentVariable);
+        var nuGetSource = string.IsNullOrWhiteSpace(configuredNuGetSource) ? null : configuredNuGetSource.Trim();
+        if (nuGetSource is not null && !Uri.TryCreate(nuGetSource, UriKind.Absolute, out _))
+        {
+            throw new InvalidOperationException($"SecureYourCode:NuGetSource must be an absolute folder path or a feed URL, but was '{nuGetSource}'.");
+        }
+
+        return new StatePaths(appWorkspace, stateRoot, graphifyPython, graphifyCli, nuGetSource);
     }
 
     private static string UserHome()

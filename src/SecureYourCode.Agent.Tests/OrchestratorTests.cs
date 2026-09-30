@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging.Abstractions;
 using SecureYourCode.Agent.Graph;
+using SecureYourCode.Agent.Infrastructure;
 using SecureYourCode.Agent.Orchestration;
 using SecureYourCode.Agent.Reporting;
 using SecureYourCode.Agent.StaticAnalysis;
@@ -58,16 +59,18 @@ public class OrchestratorTests
     private sealed record Harness(Orchestrator Orchestrator, FakeRepository Repository, FakeStaticAnalysis StaticAnalysis,
         FakeReviewerClient Client, List<Report> Published);
 
+    private static readonly LlmSettings CopilotLlm = LlmSettings.Resolve(new SecureYourCodeOptions());
+
     private static Harness Create(TestEnvironment env, FakeReviewerClient client, string[]? fingerprints = null,
         Func<StaticAnalysisResult>? analysis = null, OrchestrationTimeouts? timeouts = null, string graphStatus = GraphStatuses.Current,
-        IVerificationStage? verifier = null)
+        IVerificationStage? verifier = null, LlmSettings? llm = null)
     {
         var repository = new FakeRepository(fingerprints ?? ["fp1"]);
         var staticAnalysis = new FakeStaticAnalysis(analysis ?? Baseline);
         var published = new List<Report>();
         var graph = graphStatus == GraphStatuses.None ? null : new PublishedGraph("fp1", "0.9.71", "g", "g/graph.json");
         var orchestrator = new Orchestrator(repository, new FakeGraphs(graphStatus, graph), staticAnalysis, new FakeClientFactory(client),
-            verifier ?? new FakeVerifier(), new RecordingPublisher(published), env.Paths, timeouts ?? OrchestrationTimeouts.Default,
+            verifier ?? new FakeVerifier(), new RecordingPublisher(published), env.Paths, llm ?? CopilotLlm, timeouts ?? OrchestrationTimeouts.Default,
             TimeProvider.System, NullLogger<Orchestrator>.Instance);
         return new Harness(orchestrator, repository, staticAnalysis, client, published);
     }
@@ -86,6 +89,8 @@ public class OrchestratorTests
         Assert.Equal((RunStatuses.Complete, (string?)null, GraphStatuses.Current), (report.Run.Status, report.Run.Reason, report.Run.GraphStatus));
         Assert.Equal(("fp1", "abc1234def", false, "fp1"),
             (report.Provenance.Fingerprint, report.Provenance.CommitSha, report.Provenance.Dirty, report.Provenance.GraphFingerprint));
+        Assert.Equal("Copilot (model auto)", report.Provenance.LlmBackend);
+        Assert.Equal("4 " + SessionUsage.CostUnit, report.TokenUsage!.Total.Cost.Display);
         Assert.Equal([P1, P3], report.Findings.Select(f => f.CandidateId));
         Assert.Equal(("strong", "one lookup per order", "keep", "E1"), (report.Findings[0].Confidence, report.Findings[0].Mechanism, report.Findings[0].CriticDecision, report.Findings[0].Evidence));
         Assert.Equal(("low", "downgrade", "E1"), (report.Findings[1].Confidence, report.Findings[1].CriticDecision, report.Findings[1].Evidence));
@@ -98,6 +103,27 @@ public class OrchestratorTests
         Assert.Contains(report.Notes, n => n.StartsWith("Benchmark proposal accepted: RepositoryCallAmplification/OrderCustomerLookup", StringComparison.Ordinal));
         Assert.Same(report, Assert.Single(h.Published));
         Assert.True(File.Exists(Path.Combine(env.Paths.RunsDirectory, report.Run.RunId, "reviewers", "CpuReviewer.reply1.txt")));
+    }
+
+    [Fact]
+    public async Task ApiKeyMode_RecordsTheBackendInProvenance_AndCostIsNotApplicable()
+    {
+        using var env = await new TestEnvironment().WithDemoRepoAsync();
+        var options = new SecureYourCodeOptions
+        {
+            Llm = new LlmOptions { Mode = "ApiKey", Provider = new ProviderOptions { BaseUrl = "http://models.internal:8000/v1", WireModel = "internal-coder-1" } },
+        };
+        var llm = LlmSettings.Resolve(options, _ => "sk-secret", _ => throw new FileNotFoundException());
+        var h = Create(env, HappyClient(), llm: llm);
+
+        var report = await h.Orchestrator.RunAsync(CancellationToken.None);
+
+        Assert.Equal(RunStatuses.Complete, report.Run.Status);
+        Assert.Equal("ApiKey (openai endpoint http://models.internal:8000/v1, model internal-coder-1)", report.Provenance.LlmBackend);
+        Assert.Equal(SessionUsage.CostNotApplicable, report.TokenUsage!.Total.Cost.Display);
+        Assert.All(report.TokenUsage.Sessions, s => Assert.Equal(SessionUsage.CostNotApplicable, s.Cost.Display));
+        Assert.Equal("400", report.TokenUsage.Total.InputTokens.Display);
+        Assert.DoesNotContain("sk-secret", System.Text.Json.JsonSerializer.Serialize(report));
     }
 
     [Fact]
@@ -328,7 +354,7 @@ public class OrchestratorTests
         using var env = await new TestEnvironment().WithDemoRepoAsync();
         var repository = new FakeRepository(["fp1"]);
         var orchestrator = new Orchestrator(repository, new FakeGraphs(GraphStatuses.Current, null), new FakeStaticAnalysis(Baseline),
-            new FakeClientFactory(HappyClient()), new FakeVerifier(), new ThrowingPublisher(), env.Paths, OrchestrationTimeouts.Default,
+            new FakeClientFactory(HappyClient()), new FakeVerifier(), new ThrowingPublisher(), env.Paths, CopilotLlm, OrchestrationTimeouts.Default,
             TimeProvider.System, NullLogger<Orchestrator>.Instance);
 
         var error = await Assert.ThrowsAsync<ReportPublicationException>(() => orchestrator.RunAsync(CancellationToken.None));

@@ -15,10 +15,12 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 var options = builder.Configuration.GetSection(SecureYourCodeOptions.SectionName).Get<SecureYourCodeOptions>()
     ?? new SecureYourCodeOptions();
 var paths = StatePaths.Resolve(options);
+var llm = LlmSettings.Resolve(options); // fails fast on a misconfigured mode; the two modes never fall back to each other
 var accessToken = LocalAccessToken.Ensure(paths.AccessTokenFile);
 
 builder.Services.AddSingleton(options);
 builder.Services.AddSingleton(paths);
+builder.Services.AddSingleton(llm);
 builder.Services.AddSingleton(accessToken);
 builder.Services.AddSingleton<DemoRepoMaterializer>();
 builder.Services.AddSingleton<GitHookInstaller>();
@@ -43,6 +45,8 @@ var app = builder.Build();
 app.Logger.LogInformation("OS: {OS}; hook task template: {HookTemplate}", HostPlatform.Description, HostPlatform.HookTaskRunnerTemplate);
 app.Logger.LogInformation("AppWorkspace: {AppWorkspace}", paths.AppWorkspace);
 app.Logger.LogInformation("StateRoot: {StateRoot}", paths.StateRoot);
+app.Logger.LogInformation("LLM backend: {Llm}{KeySource}", llm.Description, llm.Provider is null ? "" : $"; key from {llm.Provider.KeySource}");
+app.Logger.LogInformation("Graphify: {Python} / {Cli}", paths.GraphifyPython, paths.GraphifyCli);
 var demoRepo = app.Services.GetRequiredService<DemoRepoMaterializer>();
 await demoRepo.EnsureAsync(app.Lifetime.ApplicationStopping);
 await demoRepo.EnsureAnalyzerReferenceAsync(app.Lifetime.ApplicationStopping);

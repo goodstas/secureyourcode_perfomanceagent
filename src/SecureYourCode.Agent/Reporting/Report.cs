@@ -54,6 +54,9 @@ public sealed class RunInfo
 
 public sealed class Provenance
 {
+    /// <summary>The model backend (H8): "Copilot (model …)" or "ApiKey (… endpoint …, model …)". Never contains a key.</summary>
+    public string? LlmBackend { get; set; }
+
     public string? CommitSha { get; set; }
 
     public bool? Dirty { get; set; }

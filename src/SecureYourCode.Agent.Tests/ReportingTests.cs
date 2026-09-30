@@ -35,6 +35,7 @@ public class ReportingTests
     {
         var report = new Report { Run = new RunInfo { RunId = runId, StartedAt = DateTimeOffset.UnixEpoch, Status = status, Reason = status == RunStatuses.Complete ? null : "critic_incomplete", GraphStatus = graph } };
         report.Provenance.CommitSha = "0123456789abcdef";
+        report.Provenance.LlmBackend = "Copilot (model auto)";
         report.Provenance.Dirty = false;
         report.Provenance.Fingerprint = "fp";
         var p1 = Finding("PERF001", "Services/OrderSummaryService.cs", 17, "OrderSummaryService.BuildSummariesAsync", Decisions.Keep, "E2");
@@ -109,6 +110,7 @@ public class ReportingTests
         report.Run.Reason = Script;
         report.Run.ModelsUsed.Add(Script);
         report.Provenance.CommitSha = Script;
+        report.Provenance.LlmBackend = Script;
         report.Notes.Add(Script);
         report.Reviewers[0].Notes.Add(Script);
         report.Reviewers[0].Error = AttributeBreak;

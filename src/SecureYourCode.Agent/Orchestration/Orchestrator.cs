@@ -28,6 +28,7 @@ public sealed class Orchestrator(
     IVerificationStage verifier,
     IReportPublisher publisher,
     StatePaths paths,
+    LlmSettings llm,
     OrchestrationTimeouts timeouts,
     TimeProvider time,
     ILogger<Orchestrator> logger) : IOrchestrator
@@ -77,6 +78,7 @@ public sealed class Orchestrator(
         // 1. Fingerprint, commit and dirty flag.
         var fingerprint = await repository.ComputeFingerprintAsync(ct);
         report.Provenance.Fingerprint = fingerprint;
+        report.Provenance.LlmBackend = llm.Description;
         var state = await repository.ReadStateAsync(ct);
         report.Provenance.CommitSha = state.CommitSha;
         report.Provenance.Dirty = state.Dirty;
@@ -343,7 +345,7 @@ public sealed class Orchestrator(
 
         report.Findings.AddRange(run.Candidates.Where(c => c.CriticDecision != Decisions.Remove));
         report.RejectedCandidates.AddRange(run.Candidates.Where(c => c.CriticDecision == Decisions.Remove));
-        report.TokenUsage = TokenUsageReport.From(run.Usage);
+        report.TokenUsage = TokenUsageReport.From(run.Usage, costApplicable: llm.Mode == LlmMode.Copilot);
         report.Run.ModelsUsed.AddRange(run.Usage.SelectMany(u => u.Calls).Select(c => c.Model).OfType<string>().Distinct());
         (report.Run.Status, report.Run.Reason) = RunStatusRules.Compute(run.Facts);
         report.Run.FinishedAt = time.GetUtcNow();

@@ -33,18 +33,24 @@ public sealed record SessionUsage(
 {
     public const string CostUnit = "premium request cost units";
 
-    public static SessionUsage From(string session, IReadOnlyList<UsageRecord> calls) => new(
+    /// <summary>Cost display in ApiKey mode (H8): Copilot's premium-request accounting does not apply to a self-hosted endpoint.</summary>
+    public const string CostNotApplicable = "not applicable (ApiKey mode)";
+
+    public static SessionUsage From(string session, IReadOnlyList<UsageRecord> calls, bool costApplicable = true) => new(
         session,
         calls.Count,
         [.. calls.Select(c => c.Model).OfType<string>().Distinct()],
         UsageTotal.Sum([.. calls.Select(c => c.InputTokens)]),
         UsageTotal.Sum([.. calls.Select(c => c.OutputTokens)]),
-        UsageTotal.Sum([.. calls.Select(c => c.Cost)], CostUnit));
+        costApplicable
+            ? UsageTotal.Sum([.. calls.Select(c => c.Cost)], CostUnit)
+            : new UsageTotal(null, 0, calls.Count, CostNotApplicable));
 }
 
 public sealed record TokenUsageReport(IReadOnlyList<SessionUsage> Sessions, SessionUsage Total)
 {
-    public static TokenUsageReport From(IReadOnlyList<(string Session, IReadOnlyList<UsageRecord> Calls)> sessions) => new(
-        [.. sessions.Select(s => SessionUsage.From(s.Session, s.Calls))],
-        SessionUsage.From("total", [.. sessions.SelectMany(s => s.Calls)]));
+    /// <param name="costApplicable">False in ApiKey mode: the Cost column then reads "not applicable" instead of a number or "not reported".</param>
+    public static TokenUsageReport From(IReadOnlyList<(string Session, IReadOnlyList<UsageRecord> Calls)> sessions, bool costApplicable = true) => new(
+        [.. sessions.Select(s => SessionUsage.From(s.Session, s.Calls, costApplicable))],
+        SessionUsage.From("total", [.. sessions.SelectMany(s => s.Calls)], costApplicable));
 }
