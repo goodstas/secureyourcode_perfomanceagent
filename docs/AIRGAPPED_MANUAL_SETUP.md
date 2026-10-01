@@ -21,10 +21,8 @@ NuGet packages the build needs, which Artifactory must be able to serve (remote 
 | Package | Version |
 |---|---|
 | `GitHub.Copilot.SDK` | 1.0.15, or 1.0.13 (see step 1a) |
-| `Microsoft.CodeAnalysis.CSharp` | 5.0.0 |
-| `Microsoft.CodeAnalysis.CSharp.Workspaces` | 5.0.0 |
+| `Microsoft.CodeAnalysis.CSharp` | 5.0.0 (keep at 5.0.0: an analyzer must not reference a newer Roslyn than the compiler in your .NET SDK) |
 | `Microsoft.CodeAnalysis.Analyzers` | 5.3.0 |
-| `Microsoft.CodeAnalysis.CSharp.Analyzer.Testing` | 1.1.4 |
 | `Microsoft.NET.Test.Sdk` | 17.14.1 |
 | `xunit` | 2.9.3 |
 | `xunit.runner.visualstudio` | 3.1.4 |
