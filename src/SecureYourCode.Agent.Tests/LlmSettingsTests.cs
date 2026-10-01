@@ -270,4 +270,15 @@ public sealed class LlmSettingsTests
         Assert.Contains("NuGetSource", Assert.Throws<InvalidOperationException>(
             () => StatePaths.Resolve(new SecureYourCodeOptions { StateRoot = root, NuGetSource = "bundle/nuget" })).Message);
     }
+
+    [Fact]
+    public void StrictHandler_ReadPath_FallsBackToPath_WhenTheSdkHasNoResolvedPath()
+    {
+        // SDK 1.0.13 has no ResolvedPath; 1.0.15 has it but leaves it null unless the runtime fills it (H8).
+        var read = new GitHub.Copilot.PermissionRequestRead { Path = "/repo/Services/A.cs", Intention = "test" };
+
+        Assert.Equal("/repo/Services/A.cs", StrictPermissionHandler.RequestedPath(read));
+        Assert.True(StrictPermissionHandler.IsInside(StrictPermissionHandler.RequestedPath(read), "/repo"));
+        Assert.False(StrictPermissionHandler.IsInside(StrictPermissionHandler.RequestedPath(read), "/other"));
+    }
 }

@@ -20,7 +20,7 @@ NuGet packages the build needs, which Artifactory must be able to serve (remote 
 
 | Package | Version |
 |---|---|
-| `GitHub.Copilot.SDK` | 1.0.15 |
+| `GitHub.Copilot.SDK` | 1.0.15, or 1.0.13 (see step 1a) |
 | `Microsoft.CodeAnalysis.CSharp` | 5.0.0 |
 | `Microsoft.CodeAnalysis.CSharp.Workspaces` | 5.0.0 |
 | `Microsoft.CodeAnalysis.Analyzers` | 3.11.0 |
@@ -41,6 +41,16 @@ dotnet nuget disable source nuget.org
 ```
 
 Why nuget.org must be disabled: at every start the host installs the Husky hook tool into the demo repository with `dotnet tool install`, which contacts every enabled source. An unreachable nuget.org makes that fail. If you prefer to keep nuget.org enabled for other projects, set `SecureYourCode:NuGetSource` in appsettings.json (step 5) to the Artifactory feed URL instead; the host then uses only that source for the tool install.
+
+## 1a. If your feed carries GitHub.Copilot.SDK 1.0.13 instead of 1.0.15
+
+The projects reference the SDK through one build property, `CopilotSdkVersion`, defined in `Directory.Build.props` with 1.0.15 as default. Set a **user environment variable** to switch every build to the version your feed has:
+
+| Variable | Value |
+|---|---|
+| `CopilotSdkVersion` | `1.0.13` |
+
+MSBuild reads it as a property, so Visual Studio and `dotnet build` both pick it up (restart them after setting it). SDK 1.0.13 was verified with the host: it builds, all tests pass, and ApiKey mode runs over the CLI binary. It pins Copilot CLI 1.0.83 for its own download, but with step 2 it uses the CLI you point it at (1.0.76, 1.0.83 and 1.0.89 verified).
 
 ## 2. The Copilot runtime: use your installed CLI
 
@@ -210,7 +220,8 @@ The full demo walkthrough is `demo\DEMO.md`. The report's provenance section sho
 | host start: `SecureYourCode:Llm:Mode must be 'Copilot' or 'ApiKey'`, `...BaseUrl must be an absolute http(s) URL`, `...WireModel ... is required`, `No API key found in ApiKey mode` | appsettings.json or the key variable is incomplete; the message names the setting |
 | `Copilot is not signed in for the isolated client` | `Llm:Mode` is still `Copilot`. Set it to `ApiKey` |
 | `Authentication failed with provider at <url> (HTTP 401)` | wrong key, or the endpoint expects the key in a different header. Try `"UseBearerToken": false` in the Provider section to send it as an API-key header instead of `Authorization: Bearer` |
-| `SDK protocol version mismatch` | the CLI binary is too old or too new for the SDK. 1.0.76, 1.0.83 and 1.0.89 are verified |
+| `SDK protocol version mismatch` | the CLI binary is too old or too new for the SDK. 1.0.76, 1.0.83 and 1.0.89 are verified with SDK 1.0.13 and 1.0.15 |
+| restore: `Unable to find package GitHub.Copilot.SDK with version (= 1.0.15)` | the feed has only 1.0.13: step 1a |
 | `The SecureYourCode analyzer is not built: ... is missing` | step 3, Release build of `SecureYourCode.PerformanceAnalyzer` |
 | `graphify extract failed` or `Could not read the installed graphifyy version` | step 4: the venv is missing, or `Graphify:Python`/`Graphify:Cli` point to the wrong files (set both or neither) |
 | `/analyze` → run status `failed`, reason `orchestration_failed` | the engine could not complete a reviewer session; the report's reviewer section and the host log carry the endpoint's error. Baseline analyzer findings are still reported |
@@ -224,3 +235,4 @@ The full demo walkthrough is `demo\DEMO.md`. The report's provenance section sho
 | The engine's isolated home (no sign-in in ApiKey mode; your CLI's own settings are not touched) | `%USERPROFILE%\.secureyourcode\copilot` |
 | The API key | `SECUREYOURCODE_LLM_API_KEY` or the `ApiKeyFile` you named, never the repository |
 | Build-time runtime choice | the `CopilotCliBinaryPath` variable |
+| Build-time SDK version choice | the `CopilotSdkVersion` variable (default 1.0.15) |

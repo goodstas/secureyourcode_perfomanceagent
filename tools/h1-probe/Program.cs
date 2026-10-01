@@ -473,7 +473,7 @@ sealed class Recorder(ProbeContext probe)
     {
         var (approved, detail) = request switch
         {
-            PermissionRequestRead read => (IsInside(read.ResolvedPath ?? read.Path, probe.RepoPath) || IsInside(read.ResolvedPath ?? read.Path, probe.ProbeRepoPath), read.ResolvedPath ?? read.Path ?? ""),
+            PermissionRequestRead read => (IsInside(RequestedPath(read), probe.RepoPath) || IsInside(RequestedPath(read), probe.ProbeRepoPath), RequestedPath(read) ?? ""),
             // Observed: PermissionRequestMcp.ToolName is server-qualified ("graphify-shortest_path"), and Graphify reports ReadOnly=false.
             PermissionRequestMcp mcp => (mcp.ServerName == ProbeContext.GraphifyServerKey
                 && ProbeContext.GraphifyServerToolNames.Any(t => mcp.ToolName == $"{ProbeContext.GraphifyServerKey}-{t}")
@@ -577,6 +577,14 @@ sealed class Recorder(ProbeContext probe)
         File.WriteAllText(file, probe.Json(evidence));
         Console.WriteLine($"{step}: {(ok ? "PASS" : "FAIL")} (evidence: probe/evidence/{Path.GetFileName(file)})");
     }
+
+    // ResolvedPath exists from SDK 1.0.15 only (H8); read it when present so the probe builds against 1.0.13 too.
+
+    private static readonly System.Reflection.PropertyInfo? ResolvedPathProperty = typeof(PermissionRequestRead).GetProperty("ResolvedPath", typeof(string));
+
+
+    private static string? RequestedPath(PermissionRequestRead read) => (ResolvedPathProperty?.GetValue(read) as string) ?? read.Path;
+
 
     private static bool IsInside(string? path, string root)
     {

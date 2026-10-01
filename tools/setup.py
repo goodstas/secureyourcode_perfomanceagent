@@ -29,6 +29,7 @@ Usage:
   python tools/setup.py --mode airgapped --bundle <dir>   # air-gapped, everything from the bundle
   python tools/setup.py --mode airgapped --nuget-source <dir|url> --pip-index-url <url> --copilot-cli-base-url <url>
   python tools/setup.py --mode airgapped --nuget-source <url> --pip-index-url <url> --copilot-npm-registry <url>
+  python tools/setup.py --mode airgapped ... --sdk-version 1.0.13      # when the feed carries only that SDK version
   python tools/setup.py --mode airgapped --bundle <dir> --graphify-python <python> --graphify-cli <graphify>
 """
 from __future__ import annotations
@@ -46,9 +47,14 @@ from pathlib import Path
 # Pinned versions. Keep in sync with docs/architecture.md.
 GRAPHIFY_VERSION = "0.9.71"
 # Also verified against 0.9.62 (H8): same tools, arguments and output layout. Pass --graphify-version to use it.
-COPILOT_CLI_VERSION = "1.0.89"  # CopilotCliVersion bundled with GitHub.Copilot.SDK 1.0.15
+# GitHub.Copilot.SDK versions the host builds with (Directory.Build.props, property CopilotSdkVersion) and the Copilot CLI
+# runtime version each one pins (its CopilotCliVersion). 1.0.15 is the H1-verified default; 1.0.13 was verified in H8 for
+# air-gapped feeds that carry only that version.
+SDK_VERSIONS = {"1.0.15": "1.0.89", "1.0.13": "1.0.83"}
+SDK_VERSION = "1.0.15"
+COPILOT_CLI_VERSION = SDK_VERSIONS[SDK_VERSION]
 # Other CLI versions the SDK was verified to drive over stdio (H8). The SDK checks protocol compatibility itself at start.
-COPILOT_CLI_VERIFIED_ALTERNATIVES = ("1.0.83", "1.0.76")
+COPILOT_CLI_VERIFIED_ALTERNATIVES = ("1.0.89", "1.0.83", "1.0.76")
 DOTNET_MAJOR = "10"
 MIN_PYTHON = (3, 10)
 
@@ -177,6 +183,12 @@ def setup_graphify(root: Path, version: str, sources: Sources, python_override: 
     check([python, "-c", "import graphify.serve, importlib.metadata as m; print('  graphifyy', m.version('graphifyy'))"])
 
 
+class Pins:
+    """The SDK version in use and the CLI version it pins; set from --sdk-version in main()."""
+    sdk = SDK_VERSION
+    cli = COPILOT_CLI_VERSION
+
+
 def copilot_cli(root: Path) -> Path:
     return root / "copilot-cli" / "node_modules" / ".bin" / ("copilot.cmd" if IS_WINDOWS else "copilot")
 
@@ -209,7 +221,8 @@ def installed_cli_version(binary: Path) -> str | None:
 
 
 def setup_copilot_cli(root: Path, registry: str | None = None, purpose: str = "for sign-in only",
-                      version: str = COPILOT_CLI_VERSION) -> Path:
+                      version: str | None = None) -> Path:
+    version = version or Pins.cli
     step(f"Copilot CLI {version} (under StateRoot, {purpose})")
     binary = copilot_native_binary(root)
     if installed_cli_version(binary) != version:
@@ -222,13 +235,13 @@ def setup_copilot_cli(root: Path, registry: str | None = None, purpose: str = "f
 
 def verify_cli_binary(binary: Path) -> None:
     version = installed_cli_version(binary)
-    if version == COPILOT_CLI_VERSION:
-        print(f"  Copilot runtime for the host: {binary} ({version}, the SDK's pinned version)")
+    if version == Pins.cli:
+        print(f"  Copilot runtime for the host: {binary} ({version}, the version SDK {Pins.sdk} pins)")
     elif version in COPILOT_CLI_VERIFIED_ALTERNATIVES:
-        print(f"  Copilot runtime for the host: {binary} ({version}; verified with the SDK, pinned is {COPILOT_CLI_VERSION})")
+        print(f"  Copilot runtime for the host: {binary} ({version}; verified with the SDK, SDK {Pins.sdk} pins {Pins.cli})")
     else:
         print(f"  WARNING: Copilot runtime for the host: {binary} ({version or 'version unknown, no package.json next to it'}).")
-        print(f"  The SDK is built for {COPILOT_CLI_VERSION} and verified with {', '.join(COPILOT_CLI_VERIFIED_ALTERNATIVES)};")
+        print(f"  SDK {Pins.sdk} pins {Pins.cli}; verified CLI versions: {', '.join(COPILOT_CLI_VERIFIED_ALTERNATIVES)};")
         print("  the SDK rejects an incompatible protocol at start (the backend check below shows the version it actually ran).")
 
 
@@ -261,10 +274,15 @@ class LocalMirror:
             self.process.wait(timeout=10)
 
 
+def dotnet_env() -> dict[str, str]:
+    # MSBuild reads environment variables as properties: this selects the GitHub.Copilot.SDK version (Directory.Build.props).
+    return dict(os.environ, **DOTNET_ENV, CopilotSdkVersion=Pins.sdk)
+
+
 def build_and_test(sources: Sources, cli_binary: Path | None) -> None:
-    step("Build and test the solution")
+    step(f"Build and test the solution (GitHub.Copilot.SDK {Pins.sdk})")
     dotnet = tool("dotnet")
-    env = dict(os.environ, **DOTNET_ENV)
+    env = dotnet_env()
     if cli_binary is not None:
         # The SDK's build targets accept a pre-installed CLI binary and skip the release-archive download; the SDK then
         # drives that binary over stdio (verified in H8). MSBuild reads environment variables as properties, so the
@@ -319,7 +337,7 @@ def check_backend(root: Path, send_prompt: bool, sources: Sources) -> bool:
     online = sources.online
     step("Model backend check through the SDK")
     mode = "chat" if send_prompt else "auth"
-    env = dict(os.environ, **DOTNET_ENV)
+    env = dotnet_env()
     if sources.nuget_source and not sources.online:
         env["SECUREYOURCODE_NUGET_SOURCE"] = sources.nuget_source
     result = run([tool("dotnet"), "run", "--no-build", "--project", REPO / "tools" / "copilot-smoke", "--", mode], env=env)
@@ -345,12 +363,15 @@ def main() -> None:
     parser.add_argument("--pip-index-url", help="air-gapped: internal Python package index instead of the bundle's wheels")
     parser.add_argument("--copilot-cli-base-url", help="air-gapped: http(s) mirror of github/copilot-cli releases "
                         "(serves v<version>/github-copilot-<version>-<platform>.tgz and SHA256SUMS.txt)")
+    parser.add_argument("--sdk-version", choices=sorted(SDK_VERSIONS), default=SDK_VERSION,
+                        help=f"GitHub.Copilot.SDK version to build with (default {SDK_VERSION}; each pins a CLI version: "
+                        + ", ".join(f"{k} -> {v}" for k, v in SDK_VERSIONS.items()) + ")")
     parser.add_argument("--copilot-npm-registry", help="air-gapped: npm registry (for example Artifactory's npm remote) to install "
                         f"@github/copilot@{COPILOT_CLI_VERSION} from; its native binary becomes the host's Copilot runtime")
     parser.add_argument("--copilot-cli-binary", help="air-gapped: an already installed Copilot CLI native binary "
                         "(node_modules/@github/copilot-<platform>/copilot[.exe]) to use as the host's runtime")
-    parser.add_argument("--copilot-cli-version", default=COPILOT_CLI_VERSION, help="with --copilot-npm-registry: the @github/copilot "
-                        f"version to install (default {COPILOT_CLI_VERSION}; also verified: {', '.join(COPILOT_CLI_VERIFIED_ALTERNATIVES)})")
+    parser.add_argument("--copilot-cli-version", help="with --copilot-npm-registry: the @github/copilot version to install "
+                        f"(default: the one the chosen SDK pins; verified: {', '.join(COPILOT_CLI_VERIFIED_ALTERNATIVES)})")
     parser.add_argument("--graphify-version", default=GRAPHIFY_VERSION, help=f"graphifyy version to install (default {GRAPHIFY_VERSION})")
     parser.add_argument("--graphify-python", help="use an existing interpreter that has graphifyy[mcp] (with --graphify-cli)")
     parser.add_argument("--graphify-cli", help="the graphify executable of that installation")
@@ -360,9 +381,10 @@ def main() -> None:
     if args.login and args.mode != "online":
         parser.error("--login needs --mode online (ApiKey mode has no sign-in)")
 
+    Pins.sdk, Pins.cli = args.sdk_version, SDK_VERSIONS[args.sdk_version]
     sources = Sources(args)
     root = state_root()
-    print(f"Repository: {REPO}\nStateRoot:  {root}\nMode:       {args.mode}")
+    print(f"Repository: {REPO}\nStateRoot:  {root}\nMode:       {args.mode}\nSDK:        GitHub.Copilot.SDK {Pins.sdk} (Copilot CLI {Pins.cli})")
     check_prerequisites(sources.online, needs_npm=sources.copilot_npm_registry is not None)
     root.mkdir(parents=True, exist_ok=True)
     setup_graphify(root, args.graphify_version, sources, args.graphify_python, args.graphify_cli)
@@ -387,6 +409,8 @@ def main() -> None:
         print("  SecureYourCode__Llm__* environment variables) and put the key in SECUREYOURCODE_LLM_API_KEY. See README.md.")
         print(f"  Also set SecureYourCode:NuGetSource (or SECUREYOURCODE_NUGET_SOURCE) to {sources.nuget_source}")
         print("  so the host can install the Husky.Net hook tool into the demo repo without nuget.org.")
+    if Pins.sdk != SDK_VERSION:
+        print(f"  Set the environment variable CopilotSdkVersion permanently to {Pins.sdk} so that every later dotnet build uses that SDK.")
     if cli_binary is not None:
         print(f"  Set the environment variable CopilotCliBinaryPath permanently to {cli_binary}")
         print("  so that every later dotnet build/run uses this Copilot runtime instead of downloading the release archive.")

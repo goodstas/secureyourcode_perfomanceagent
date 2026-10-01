@@ -1,0 +1,11 @@
+<Project>
+  <!--
+    GitHub.Copilot.SDK version used by every project that references it (H8). Default: the version verified in H1.
+    Override without editing project files, for example on an air-gapped machine whose feed carries another version:
+      dotnet build -p:CopilotSdkVersion=1.0.13      or the environment variable CopilotSdkVersion=1.0.13
+    Each SDK version pins its own Copilot CLI runtime version (1.0.15 -> 1.0.89, 1.0.13 -> 1.0.83); see docs/architecture.md.
+  -->
+  <PropertyGroup>
+    <CopilotSdkVersion Condition="'$(CopilotSdkVersion)' == ''">1.0.15</CopilotSdkVersion>
+  </PropertyGroup>
+</Project>

@@ -36,7 +36,9 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO / "tools"))
-from setup import COPILOT_CLI_VERSION, GRAPHIFY_VERSION  # noqa: E402  (single source of truth for the pins)
+from setup import GRAPHIFY_VERSION, SDK_VERSION, SDK_VERSIONS  # noqa: E402  (single source of truth for the pins)
+
+COPILOT_CLI_VERSION = SDK_VERSIONS[SDK_VERSION]  # replaced by --sdk-version in main()
 
 HUSKY_VERSION = "0.9.1"  # must equal GitHookInstaller.HuskyVersion (the host installs it into the demo repo at startup)
 COPILOT_RELEASE_BASE = "https://github.com/github/copilot-cli/releases/download"
@@ -68,11 +70,11 @@ def current_platform() -> str:
     return f"{system}-{arch}"
 
 
-def bundle_nuget(target: Path) -> list[Path]:
-    print("\n== NuGet packages", flush=True)
+def bundle_nuget(target: Path, sdk_version: str) -> list[Path]:
+    print(f"\n== NuGet packages (GitHub.Copilot.SDK {sdk_version})", flush=True)
     target.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="syc-bundle-") as tmp:
-        env = dict(os.environ, DOTNET_CLI_TELEMETRY_OPTOUT="1", DOTNET_NOLOGO="1", NUGET_PACKAGES=tmp)
+        env = dict(os.environ, DOTNET_CLI_TELEMETRY_OPTOUT="1", DOTNET_NOLOGO="1", NUGET_PACKAGES=tmp, CopilotSdkVersion=sdk_version)
         for project in PROJECTS:
             # A fresh packages folder makes NuGet fetch every package, so nothing is missed because it was cached.
             run(["dotnet", "restore", project, "--packages", tmp, "--force"], env=env)
@@ -148,7 +150,11 @@ def main() -> None:
     parser.add_argument("--python-version", help="target Python version for the wheels, e.g. 3.12 (default: this interpreter)")
     parser.add_argument("--python-platform", help="target wheel platform, e.g. win_amd64 or manylinux2014_x86_64 (default: this machine)")
     parser.add_argument("--skip-python", action="store_true", help="do not bundle Python packages (internal index available)")
+    parser.add_argument("--sdk-version", choices=sorted(SDK_VERSIONS), default=SDK_VERSION,
+                        help=f"GitHub.Copilot.SDK version to bundle for (default {SDK_VERSION}); sets the Copilot runtime version too")
     args = parser.parse_args()
+    global COPILOT_CLI_VERSION
+    COPILOT_CLI_VERSION = SDK_VERSIONS[args.sdk_version]
 
     platforms = [p.strip() for p in args.platforms.split(",")] if args.platforms else sorted({current_platform(), "win32-x64"})
     for plat in platforms:
@@ -158,12 +164,13 @@ def main() -> None:
     bundle = args.bundle.resolve()
     bundle.mkdir(parents=True, exist_ok=True)
     files = []
-    files += bundle_nuget(bundle / "nuget")
+    files += bundle_nuget(bundle / "nuget", args.sdk_version)
     files += bundle_copilot_cli(bundle / "copilot-cli", platforms)
     if not args.skip_python:
         files += bundle_python(bundle / "python", args.graphify_version, args.python_version, args.python_platform)
 
     manifest = {
+        "copilotSdkVersion": args.sdk_version,
         "copilotCliVersion": COPILOT_CLI_VERSION,
         "copilotPlatforms": platforms,
         "graphifyVersion": None if args.skip_python else args.graphify_version,

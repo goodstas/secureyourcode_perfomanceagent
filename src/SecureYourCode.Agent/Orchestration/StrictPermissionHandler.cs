@@ -18,6 +18,16 @@ public sealed class StrictPermissionHandler(string repoPath)
 
     private readonly System.Collections.Concurrent.ConcurrentQueue<string> _denials = new();
 
+    // PermissionRequestRead.ResolvedPath (the runtime's canonical path) exists from SDK 1.0.15 and is marked internal and
+    // experimental there; SDK 1.0.13 (an air-gapped feed's version, H8) has only Path. Read it when the SDK provides it,
+    // so the same source builds against both (Directory.Build.props, CopilotSdkVersion).
+    private static readonly System.Reflection.PropertyInfo? ResolvedPathProperty =
+        typeof(PermissionRequestRead).GetProperty("ResolvedPath", typeof(string));
+
+    /// <summary>The path a read request is about: the runtime-resolved one when the SDK exposes it, else the requested one.</summary>
+    public static string? RequestedPath(PermissionRequestRead read) =>
+        (ResolvedPathProperty?.GetValue(read) as string) ?? read.Path;
+
     public int Denied => _denials.Count;
 
     /// <summary>What was denied ("read &lt;path&gt;", "shell &lt;command&gt;", ...), for the reviewer's report notes.</summary>
@@ -27,7 +37,7 @@ public sealed class StrictPermissionHandler(string repoPath)
     {
         var approved = request switch
         {
-            PermissionRequestRead read => IsInside(read.ResolvedPath ?? read.Path, repoPath),
+            PermissionRequestRead read => IsInside(RequestedPath(read), repoPath),
             // Observed in H1: the MCP permission ToolName is server-qualified ("graphify-shortest_path").
             PermissionRequestMcp mcp => mcp.ServerName == GraphifyServerKey
                 && GraphifyServerToolNames.Any(tool => mcp.ToolName == $"{GraphifyServerKey}-{tool}")
@@ -39,7 +49,7 @@ public sealed class StrictPermissionHandler(string repoPath)
         {
             _denials.Enqueue(request switch
             {
-                PermissionRequestRead read => $"read {read.ResolvedPath ?? read.Path}",
+                PermissionRequestRead read => $"read {RequestedPath(read)}",
                 PermissionRequestMcp mcp => $"mcp {mcp.ServerName}/{mcp.ToolName} (arguments: {ArgumentNames(mcp.Args)})",
                 PermissionRequestShell shell => $"shell {shell.FullCommandText}",
                 PermissionRequestWrite write => $"write {write.FileName}",
