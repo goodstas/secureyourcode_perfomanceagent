@@ -45,6 +45,8 @@ python tools/setup.py --check-model
 
 ### Air-gapped setup
 
+For a step-by-step manual setup on a work PC that uses an already installed Copilot CLI and internal Artifactory feeds, without `setup.py` or a bundle, see [docs/AIRGAPPED_MANUAL_SETUP.md](docs/AIRGAPPED_MANUAL_SETUP.md). The rest of this section describes the scripted routes.
+
 An air-gapped machine has no route to nuget.org, PyPI, npm or GitHub, and no GitHub Copilot sign-in. The host then runs in **ApiKey mode** against your organization's model endpoint, and every dependency comes from a bundle or from internal mirrors. Nothing else changes: the same Copilot runtime, the same reviewer agents, the same read-only permission handler and the same Graphify tools.
 
 **1. On a connected machine**, make the bundle (packages, the pinned Copilot runtime archives, Graphify wheels):
