@@ -34,6 +34,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import platform
 import shutil
@@ -45,7 +46,9 @@ from pathlib import Path
 # Pinned versions. Keep in sync with docs/architecture.md.
 GRAPHIFY_VERSION = "0.9.71"
 # Also verified against 0.9.62 (H8): same tools, arguments and output layout. Pass --graphify-version to use it.
-COPILOT_CLI_VERSION = "1.0.89"  # must equal CopilotCliVersion bundled with GitHub.Copilot.SDK 1.0.15
+COPILOT_CLI_VERSION = "1.0.89"  # CopilotCliVersion bundled with GitHub.Copilot.SDK 1.0.15
+# Other CLI versions the SDK was verified to drive over stdio (H8). The SDK checks protocol compatibility itself at start.
+COPILOT_CLI_VERIFIED_ALTERNATIVES = ("1.0.83",)
 DOTNET_MAJOR = "10"
 MIN_PYTHON = (3, 10)
 
@@ -193,22 +196,40 @@ def copilot_native_binary(root: Path) -> Path:
     return root / "copilot-cli" / "node_modules" / "@github" / f"copilot-{copilot_platform()}" / ("copilot.exe" if IS_WINDOWS else "copilot")
 
 
-def setup_copilot_cli(root: Path, registry: str | None = None, purpose: str = "for sign-in only") -> Path:
-    step(f"Copilot CLI {COPILOT_CLI_VERSION} (under StateRoot, {purpose})")
-    cli = copilot_cli(root)
-    if not cli.exists() or COPILOT_CLI_VERSION not in output([cli, "--version"]):
+def installed_cli_version(binary: Path) -> str | None:
+    """The version from the npm package metadata next to the binary. `copilot --version` is not used: it was observed
+    to print the newest known version (1.0.89 from a 1.0.83 binary), while the SDK reports the real one at runtime."""
+    manifest = binary.parent / "package.json"
+    if not manifest.exists():
+        return None
+    try:
+        return json.loads(manifest.read_text(encoding="utf-8")).get("version")
+    except (OSError, ValueError):
+        return None
+
+
+def setup_copilot_cli(root: Path, registry: str | None = None, purpose: str = "for sign-in only",
+                      version: str = COPILOT_CLI_VERSION) -> Path:
+    step(f"Copilot CLI {version} (under StateRoot, {purpose})")
+    binary = copilot_native_binary(root)
+    if installed_cli_version(binary) != version:
         registry_args = ["--registry", registry] if registry else []
         check([tool("npm"), "install", "--prefix", root / "copilot-cli", "--no-fund", "--no-audit", *registry_args,
-               f"@github/copilot@{COPILOT_CLI_VERSION}"])
-    print(f"  {output([cli, '--version']).splitlines()[0]}")
-    return copilot_native_binary(root)
+               f"@github/copilot@{version}"])
+    print(f"  @github/copilot {installed_cli_version(binary) or 'unknown version'} at {binary.parent}")
+    return binary
 
 
 def verify_cli_binary(binary: Path) -> None:
-    version = output([binary, "--version"])
-    if COPILOT_CLI_VERSION not in version:
-        fail(f"'{binary}' reports '{version.splitlines()[0] if version else 'nothing'}'; the SDK needs Copilot CLI {COPILOT_CLI_VERSION}.")
-    print(f"  Copilot runtime for the host: {binary} ({version.splitlines()[0]})")
+    version = installed_cli_version(binary)
+    if version == COPILOT_CLI_VERSION:
+        print(f"  Copilot runtime for the host: {binary} ({version}, the SDK's pinned version)")
+    elif version in COPILOT_CLI_VERIFIED_ALTERNATIVES:
+        print(f"  Copilot runtime for the host: {binary} ({version}; verified with the SDK, pinned is {COPILOT_CLI_VERSION})")
+    else:
+        print(f"  WARNING: Copilot runtime for the host: {binary} ({version or 'version unknown, no package.json next to it'}).")
+        print(f"  The SDK is built for {COPILOT_CLI_VERSION} and verified with {', '.join(COPILOT_CLI_VERIFIED_ALTERNATIVES)};")
+        print("  the SDK rejects an incompatible protocol at start (the backend check below shows the version it actually ran).")
 
 
 class LocalMirror:
@@ -326,8 +347,10 @@ def main() -> None:
                         "(serves v<version>/github-copilot-<version>-<platform>.tgz and SHA256SUMS.txt)")
     parser.add_argument("--copilot-npm-registry", help="air-gapped: npm registry (for example Artifactory's npm remote) to install "
                         f"@github/copilot@{COPILOT_CLI_VERSION} from; its native binary becomes the host's Copilot runtime")
-    parser.add_argument("--copilot-cli-binary", help="air-gapped: an already installed Copilot CLI native binary of exactly "
-                        f"version {COPILOT_CLI_VERSION} (node_modules/@github/copilot-<platform>/copilot[.exe]) to use as the host's runtime")
+    parser.add_argument("--copilot-cli-binary", help="air-gapped: an already installed Copilot CLI native binary "
+                        "(node_modules/@github/copilot-<platform>/copilot[.exe]) to use as the host's runtime")
+    parser.add_argument("--copilot-cli-version", default=COPILOT_CLI_VERSION, help="with --copilot-npm-registry: the @github/copilot "
+                        f"version to install (default {COPILOT_CLI_VERSION}; also verified: {', '.join(COPILOT_CLI_VERIFIED_ALTERNATIVES)})")
     parser.add_argument("--graphify-version", default=GRAPHIFY_VERSION, help=f"graphifyy version to install (default {GRAPHIFY_VERSION})")
     parser.add_argument("--graphify-python", help="use an existing interpreter that has graphifyy[mcp] (with --graphify-cli)")
     parser.add_argument("--graphify-cli", help="the graphify executable of that installation")
@@ -347,7 +370,7 @@ def main() -> None:
     if sources.online:
         setup_copilot_cli(root)
     elif sources.copilot_npm_registry:
-        cli_binary = setup_copilot_cli(root, sources.copilot_npm_registry, purpose="the host's Copilot runtime")
+        cli_binary = setup_copilot_cli(root, sources.copilot_npm_registry, purpose="the host's Copilot runtime", version=args.copilot_cli_version)
         verify_cli_binary(cli_binary)
     elif sources.copilot_cli_binary is not None:
         step("Copilot CLI (existing installation)")
