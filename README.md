@@ -63,6 +63,17 @@ python tools/setup.py --mode airgapped --bundle <bundle-folder>
 
 This installs Graphify from the bundle's wheels, restores NuGet packages from the bundle, serves the bundle's Copilot runtime archive to the SDK's build over loopback (the SDK still verifies its SHA-256), builds, and runs the tests. Instead of a bundle you can point at internal mirrors: `--nuget-source <folder or feed URL>`, `--pip-index-url <url>`, and `--copilot-cli-base-url <url>` (a mirror of `github/copilot-cli` releases, serving `v1.0.89/github-copilot-1.0.89-<platform>.tgz` and `SHA256SUMS.txt`). An existing Graphify installation can be used with `--graphify-python <interpreter> --graphify-cli <graphify executable>`; `--graphify-version 0.9.62` installs that verified version instead of the default 0.9.71.
 
+**Using Artifactory instead of a bundle.** When the air-gapped network reaches an internal Artifactory, nothing has to be carried across: every source becomes an internal URL. Artifactory's NuGet and PyPI repositories (local, or remote ones that proxy nuget.org and PyPI) serve the packages, and a Generic repository serves the Copilot runtime archive. The SDK's download path is identical to GitHub's release URL layout, so either a **remote** Generic repository pointing at `https://github.com` (Artifactory fetches and caches the files on first use), or a **local** Generic repository into which you upload the bundle's `copilot-cli/v1.0.89/` folder as is, works:
+
+```
+python tools/setup.py --mode airgapped ^
+  --nuget-source https://<artifactory>/artifactory/api/nuget/v3/<nuget-repo> ^
+  --pip-index-url https://<artifactory>/artifactory/api/pypi/<pypi-repo>/simple ^
+  --copilot-cli-base-url https://<artifactory>/artifactory/<generic-repo>/github/copilot-cli/releases/download
+```
+
+For a local Generic repository, the base URL is `https://<artifactory>/artifactory/<generic-repo>` (the folder that contains `v1.0.89/`). The SDK still verifies the archive against `SHA256SUMS.txt`, so both files must pass through unchanged. Put the same NuGet URL into `SecureYourCode:NuGetSource` so the host can install the Husky.Net hook tool at startup. The feeds must allow anonymous read from the machine: `dotnet restore`, the host's tool install and `pip` do not prompt for credentials (a `NuGet.Config` with `packageSourceCredentials` and pip's `--index-url` with embedded credentials or a `pip.conf` are the usual answers if they do not). The bundle remains the fallback for a machine that cannot reach Artifactory.
+
 **3. Configure ApiKey mode.** Copy `tools/airgap/appsettings.ApiKey.example.json` over `src/SecureYourCode.Agent/appsettings.json` (or set the same keys as `SecureYourCode__Llm__...` environment variables) and fill in:
 
 | Setting | Meaning |
