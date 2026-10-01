@@ -18,8 +18,9 @@ Two modes (H8):
   --mode online     (default) packages come from nuget.org, PyPI, npm and GitHub; developers sign in to Copilot.
   --mode airgapped  no internet. Dependencies come from a bundle made with tools/airgap/bundle.py on a connected
                     machine (--bundle), or from your organization's mirrors (--nuget-source, --pip-index-url,
-                    --copilot-cli-base-url). The Copilot CLI and the GitHub sign-in are not used; the host runs in
-                    ApiKey mode against your own endpoint (SecureYourCode:Llm in appsettings.json).
+                    --copilot-cli-base-url, or --copilot-npm-registry for the @github/copilot npm package, which the
+                    SDK can drive over stdio instead of its release archive). The GitHub sign-in is not used; the host
+                    runs in ApiKey mode against your own endpoint (SecureYourCode:Llm in appsettings.json).
 
 Usage:
   python tools/setup.py                                   # online: set up and check sign-in (no model call)
@@ -27,12 +28,14 @@ Usage:
   python tools/setup.py --check-model                     # also send one short prompt through the configured backend
   python tools/setup.py --mode airgapped --bundle <dir>   # air-gapped, everything from the bundle
   python tools/setup.py --mode airgapped --nuget-source <dir|url> --pip-index-url <url> --copilot-cli-base-url <url>
+  python tools/setup.py --mode airgapped --nuget-source <url> --pip-index-url <url> --copilot-npm-registry <url>
   python tools/setup.py --mode airgapped --bundle <dir> --graphify-python <python> --graphify-cli <graphify>
 """
 from __future__ import annotations
 
 import argparse
 import os
+import platform
 import shutil
 import socket
 import subprocess
@@ -90,7 +93,7 @@ def output(cmd: list[str]) -> str:
     return subprocess.run([str(c) for c in cmd], capture_output=True, text=True).stdout.strip()
 
 
-def check_prerequisites(online: bool) -> None:
+def check_prerequisites(online: bool, needs_npm: bool = True) -> None:
     step("Prerequisites")
     if sys.version_info < MIN_PYTHON:
         fail(f"Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]}+ is required; this is {sys.version.split()[0]}.")
@@ -102,10 +105,10 @@ def check_prerequisites(online: bool) -> None:
     print(f"  dotnet SDKs: {', '.join(line.split()[0] for line in sdks)}")
 
     print(f"  {output([tool('git'), '--version'])}")
-    if online:
+    if online or needs_npm:
         print(f"  node {output([tool('node'), '--version'])}, npm {output([tool('npm'), '--version'])}")
     else:
-        print("  node/npm: not needed in air-gapped mode")
+        print("  node/npm: not needed (Copilot runtime from a release archive)")
 
 
 class Sources:
@@ -120,15 +123,20 @@ class Sources:
         self.pip_index_url: str | None = args.pip_index_url
         self.pip_find_links: Path | None = None if args.pip_index_url else (self.bundle / "python" if self.bundle else None)
         self.copilot_cli_base_url: str | None = args.copilot_cli_base_url
-        self.copilot_cli_dir: Path | None = None if args.copilot_cli_base_url else (self.bundle / "copilot-cli" if self.bundle else None)
+        self.copilot_npm_registry: str | None = args.copilot_npm_registry
+        self.copilot_cli_binary: Path | None = Path(args.copilot_cli_binary).resolve() if args.copilot_cli_binary else None
+        explicit_cli = bool(self.copilot_npm_registry or self.copilot_cli_binary)
+        self.copilot_cli_dir: Path | None = None if (args.copilot_cli_base_url or explicit_cli) else (self.bundle / "copilot-cli" if self.bundle else None)
+        if self.copilot_cli_binary is not None and not self.copilot_cli_binary.exists():
+            fail(f"--copilot-cli-binary '{self.copilot_cli_binary}' does not exist.")
         if not self.online:
             missing = []
             if not self.nuget_source:
                 missing.append("--nuget-source (or --bundle)")
             if not (self.pip_index_url or self.pip_find_links or (args.graphify_python and args.graphify_cli)):
                 missing.append("--pip-index-url, --bundle, or --graphify-python/--graphify-cli")
-            if not (self.copilot_cli_base_url or self.copilot_cli_dir):
-                missing.append("--copilot-cli-base-url (or --bundle)")
+            if not (self.copilot_cli_base_url or self.copilot_cli_dir or explicit_cli):
+                missing.append("--copilot-cli-base-url, --copilot-npm-registry, --copilot-cli-binary, or --bundle")
             if missing:
                 fail("air-gapped mode needs a source for every dependency; missing: " + "; ".join(missing))
 
@@ -170,13 +178,37 @@ def copilot_cli(root: Path) -> Path:
     return root / "copilot-cli" / "node_modules" / ".bin" / ("copilot.cmd" if IS_WINDOWS else "copilot")
 
 
-def setup_copilot_cli(root: Path) -> None:
-    step(f"Copilot CLI {COPILOT_CLI_VERSION} (under StateRoot, for sign-in only)")
+def copilot_platform() -> str:
+    """The @github/copilot platform package suffix for this machine (also the SDK's runtime platform name)."""
+    system = {"win32": "win32", "linux": "linux", "darwin": "darwin"}.get(sys.platform)
+    if system is None:
+        fail(f"unsupported platform for the Copilot CLI: {sys.platform}")
+    machine = platform.machine().lower()
+    arch = "arm64" if machine in ("arm64", "aarch64") else "x64"
+    return f"{system}-{arch}"
+
+
+def copilot_native_binary(root: Path) -> Path:
+    """The native CLI binary inside the npm platform package, usable as the SDK's CopilotCliBinaryPath (H8)."""
+    return root / "copilot-cli" / "node_modules" / "@github" / f"copilot-{copilot_platform()}" / ("copilot.exe" if IS_WINDOWS else "copilot")
+
+
+def setup_copilot_cli(root: Path, registry: str | None = None, purpose: str = "for sign-in only") -> Path:
+    step(f"Copilot CLI {COPILOT_CLI_VERSION} (under StateRoot, {purpose})")
     cli = copilot_cli(root)
     if not cli.exists() or COPILOT_CLI_VERSION not in output([cli, "--version"]):
-        check([tool("npm"), "install", "--prefix", root / "copilot-cli", "--no-fund", "--no-audit",
+        registry_args = ["--registry", registry] if registry else []
+        check([tool("npm"), "install", "--prefix", root / "copilot-cli", "--no-fund", "--no-audit", *registry_args,
                f"@github/copilot@{COPILOT_CLI_VERSION}"])
     print(f"  {output([cli, '--version']).splitlines()[0]}")
+    return copilot_native_binary(root)
+
+
+def verify_cli_binary(binary: Path) -> None:
+    version = output([binary, "--version"])
+    if COPILOT_CLI_VERSION not in version:
+        fail(f"'{binary}' reports '{version.splitlines()[0] if version else 'nothing'}'; the SDK needs Copilot CLI {COPILOT_CLI_VERSION}.")
+    print(f"  Copilot runtime for the host: {binary} ({version.splitlines()[0]})")
 
 
 class LocalMirror:
@@ -208,10 +240,15 @@ class LocalMirror:
             self.process.wait(timeout=10)
 
 
-def build_and_test(sources: Sources) -> None:
+def build_and_test(sources: Sources, cli_binary: Path | None) -> None:
     step("Build and test the solution")
     dotnet = tool("dotnet")
     env = dict(os.environ, **DOTNET_ENV)
+    if cli_binary is not None:
+        # The SDK's build targets accept a pre-installed CLI binary and skip the release-archive download; the SDK then
+        # drives that binary over stdio (verified in H8). MSBuild reads environment variables as properties, so the
+        # same variable makes every later `dotnet build`/`dotnet run` use it too.
+        env["CopilotCliBinaryPath"] = str(cli_binary)
     projects = [REPO / "SecureYourCode.slnx", REPO / "tools" / "copilot-smoke"]
     if sources.online:
         restore_args: list[str] = []
@@ -231,7 +268,7 @@ def build_and_test(sources: Sources) -> None:
         check([dotnet, "test", REPO / "SecureYourCode.slnx", "--no-build"], env=build_env)
         check([dotnet, "build", REPO / "tools" / "copilot-smoke", "--no-restore"], env=build_env)
 
-    if sources.online:
+    if sources.online or cli_binary is not None:
         build_all(env)
     elif sources.copilot_cli_base_url:
         build_all(dict(env, COPILOT_CLI_DOWNLOAD_BASE_URL=sources.copilot_cli_base_url))
@@ -287,6 +324,10 @@ def main() -> None:
     parser.add_argument("--pip-index-url", help="air-gapped: internal Python package index instead of the bundle's wheels")
     parser.add_argument("--copilot-cli-base-url", help="air-gapped: http(s) mirror of github/copilot-cli releases "
                         "(serves v<version>/github-copilot-<version>-<platform>.tgz and SHA256SUMS.txt)")
+    parser.add_argument("--copilot-npm-registry", help="air-gapped: npm registry (for example Artifactory's npm remote) to install "
+                        f"@github/copilot@{COPILOT_CLI_VERSION} from; its native binary becomes the host's Copilot runtime")
+    parser.add_argument("--copilot-cli-binary", help="air-gapped: an already installed Copilot CLI native binary of exactly "
+                        f"version {COPILOT_CLI_VERSION} (node_modules/@github/copilot-<platform>/copilot[.exe]) to use as the host's runtime")
     parser.add_argument("--graphify-version", default=GRAPHIFY_VERSION, help=f"graphifyy version to install (default {GRAPHIFY_VERSION})")
     parser.add_argument("--graphify-python", help="use an existing interpreter that has graphifyy[mcp] (with --graphify-cli)")
     parser.add_argument("--graphify-cli", help="the graphify executable of that installation")
@@ -299,12 +340,20 @@ def main() -> None:
     sources = Sources(args)
     root = state_root()
     print(f"Repository: {REPO}\nStateRoot:  {root}\nMode:       {args.mode}")
-    check_prerequisites(sources.online)
+    check_prerequisites(sources.online, needs_npm=sources.copilot_npm_registry is not None)
     root.mkdir(parents=True, exist_ok=True)
     setup_graphify(root, args.graphify_version, sources, args.graphify_python, args.graphify_cli)
+    cli_binary: Path | None = None
     if sources.online:
         setup_copilot_cli(root)
-    build_and_test(sources)
+    elif sources.copilot_npm_registry:
+        cli_binary = setup_copilot_cli(root, sources.copilot_npm_registry, purpose="the host's Copilot runtime")
+        verify_cli_binary(cli_binary)
+    elif sources.copilot_cli_binary is not None:
+        step("Copilot CLI (existing installation)")
+        cli_binary = sources.copilot_cli_binary
+        verify_cli_binary(cli_binary)
+    build_and_test(sources, cli_binary)
     if args.login:
         copilot_login(root)
     ready = check_backend(root, args.check_model, sources)
@@ -315,6 +364,9 @@ def main() -> None:
         print("  SecureYourCode__Llm__* environment variables) and put the key in SECUREYOURCODE_LLM_API_KEY. See README.md.")
         print(f"  Also set SecureYourCode:NuGetSource (or SECUREYOURCODE_NUGET_SOURCE) to {sources.nuget_source}")
         print("  so the host can install the Husky.Net hook tool into the demo repo without nuget.org.")
+    if cli_binary is not None:
+        print(f"  Set the environment variable CopilotCliBinaryPath permanently to {cli_binary}")
+        print("  so that every later dotnet build/run uses this Copilot runtime instead of downloading the release archive.")
     print("  Environment ready." if ready else "  Environment ready except the model backend (see above).")
 
 
