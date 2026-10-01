@@ -48,7 +48,7 @@ GRAPHIFY_VERSION = "0.9.71"
 # Also verified against 0.9.62 (H8): same tools, arguments and output layout. Pass --graphify-version to use it.
 COPILOT_CLI_VERSION = "1.0.89"  # CopilotCliVersion bundled with GitHub.Copilot.SDK 1.0.15
 # Other CLI versions the SDK was verified to drive over stdio (H8). The SDK checks protocol compatibility itself at start.
-COPILOT_CLI_VERIFIED_ALTERNATIVES = ("1.0.83",)
+COPILOT_CLI_VERIFIED_ALTERNATIVES = ("1.0.83", "1.0.76")
 DOTNET_MAJOR = "10"
 MIN_PYTHON = (3, 10)
 
