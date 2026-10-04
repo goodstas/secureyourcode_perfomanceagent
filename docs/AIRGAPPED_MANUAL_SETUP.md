@@ -27,7 +27,7 @@ NuGet packages the build needs, which Artifactory must be able to serve (remote 
 | `xunit` | 2.9.3 |
 | `xunit.runner.visualstudio` | 3.1.4 |
 | `coverlet.collector` | 6.0.4 |
-| `Husky` (a .NET tool, installed by the host at startup) | 0.9.1 |
+| `Husky` (a .NET tool, installed by the host at startup; optional with `"InstallGitHook": false`) | 0.9.1 |
 
 ## 1. NuGet: point everything at Artifactory
 
@@ -214,6 +214,7 @@ The full demo walkthrough is `demo\DEMO.md`. The report's provenance section sho
 | Message | Cause and fix |
 |---|---|
 | build: `Copilot CLI binary not found at '...'` or a download attempt from `github.com/github/copilot-cli` | `CopilotCliBinaryPath` is unset, wrong, or not visible to this process. Check the path, restart Visual Studio or the terminal |
+| host start: `dotnet tool install husky --version 0.9.1 failed` / downloading Husky failed | the feed has no package `Husky` 0.9.1 (it has no dependencies of its own), or the tool install used an unreachable source. Request `Husky` 0.9.1 for the feed. Until then set `"InstallGitHook": false` in appsettings.json: the host starts without the commit hook and refreshes the graph at startup and at every `/analyze` instead |
 | `Unable to load the service index for source https://api.nuget.org/v3/index.json` | nuget.org is still an enabled source. Disable it (step 1) or set `SecureYourCode:NuGetSource` to the Artifactory feed |
 | host start: `SecureYourCode:Llm:Mode must be 'Copilot' or 'ApiKey'`, `...BaseUrl must be an absolute http(s) URL`, `...WireModel ... is required`, `No API key found in ApiKey mode` | appsettings.json or the key variable is incomplete; the message names the setting |
 | `Copilot is not signed in for the isolated client` | `Llm:Mode` is still `Copilot`. Set it to `ApiKey` |

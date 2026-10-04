@@ -50,7 +50,15 @@ app.Logger.LogInformation("Graphify: {Python} / {Cli}", paths.GraphifyPython, pa
 var demoRepo = app.Services.GetRequiredService<DemoRepoMaterializer>();
 await demoRepo.EnsureAsync(app.Lifetime.ApplicationStopping);
 await demoRepo.EnsureAnalyzerReferenceAsync(app.Lifetime.ApplicationStopping);
-await app.Services.GetRequiredService<GitHookInstaller>().EnsureHookInstalledAsync(app.Lifetime.ApplicationStopping);
+if (options.InstallGitHook)
+{
+    await app.Services.GetRequiredService<GitHookInstaller>().EnsureHookInstalledAsync(app.Lifetime.ApplicationStopping);
+}
+else
+{
+    // Plan §6 H3 fallback, chosen by configuration (H8): no hook, so the graph is refreshed only at startup and at /analyze.
+    app.Logger.LogWarning("SecureYourCode:InstallGitHook is false: the demo repo gets no post-commit hook; graphs are refreshed at startup and at /analyze time only");
+}
 app.Services.GetRequiredService<GraphRefreshQueue>().Request(); // startup refresh, run by the background worker
 
 app.MapPost("/git-post-commit", (HttpRequest http, LocalAccessToken token, GraphRefreshQueue queue) =>

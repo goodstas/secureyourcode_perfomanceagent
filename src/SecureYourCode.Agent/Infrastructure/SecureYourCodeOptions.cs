@@ -25,6 +25,13 @@ public sealed class SecureYourCodeOptions
 
     /// <summary>Optional overrides for the Graphify interpreter and CLI (H8, air-gapped installs).</summary>
     public GraphifyOptions Graphify { get; set; } = new();
+
+    /// <summary>
+    /// Install the Husky.Net post-commit hook into the demo repo at startup (plan §4.2). Default true. False is the plan's
+    /// H3 fallback for a machine whose NuGet feed cannot serve the Husky tool (H8): commits then do not trigger a graph
+    /// refresh, and the graph is refreshed at startup and at /analyze time instead.
+    /// </summary>
+    public bool InstallGitHook { get; set; } = true;
 }
 
 /// <summary>SecureYourCode:Llm. Mode "Copilot" (GitHub sign-in, the H1 configuration) or "ApiKey" (a self-hosted, OpenAI-compatible endpoint).</summary>
