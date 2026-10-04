@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Reading a SecureYourCode Report</title>
+<style>
+/* Layout: one reading column, a sticky section index on wide screens, evidence badges as the one bold element.
+   Everything is self-contained: no fonts, scripts or images from outside, so it renders on an air-gapped machine. */
+:root {
+  --bg: #f6f5f1;
+  --surface: #ffffff;
+  --fg: #1d2127;
+  --muted: #5b6370;
+  --rule: #d9d6cc;
+  --accent: #1f5f8b;
+  --accent-soft: #e4eef6;
+  --e0: #6b7280; --e0-bg: #eceef1;
+  --e1: #1f5f8b; --e1-bg: #e4eef6;
+  --e2: #1d7a4a; --e2-bg: #e2f2e8;
+  --warn-bg: #fbf0d8; --warn-fg: #6b4e00;
+  --code-bg: #eeede8;
+  --display: Georgia, "Times New Roman", serif;
+  --body: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: Consolas, "Cascadia Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #15181d; --surface: #1d2127; --fg: #e8e6e0; --muted: #a3a9b4; --rule: #343a44;
+    --accent: #7fb3d9; --accent-soft: #1f2f3d;
+    --e0: #b4bac4; --e0-bg: #2a2f37; --e1: #8cc0e6; --e1-bg: #1f2f3d; --e2: #7fd0a1; --e2-bg: #1d3528;
+    --warn-bg: #3a3012; --warn-fg: #f1d37a; --code-bg: #262b33; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #15181d; --surface: #1d2127; --fg: #e8e6e0; --muted: #a3a9b4; --rule: #343a44;
+  --accent: #7fb3d9; --accent-soft: #1f2f3d;
+  --e0: #b4bac4; --e0-bg: #2a2f37; --e1: #8cc0e6; --e1-bg: #1f2f3d; --e2: #7fd0a1; --e2-bg: #1d3528;
+  --warn-bg: #3a3012; --warn-fg: #f1d37a; --code-bg: #262b33; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--fg); font: 16px/1.55 var(--body); padding-block: 0 4rem; padding-inline: 16px; }
+.wrap { max-width: 1100px; margin: 0 auto; display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 2.5rem; }
+@media (max-width: 860px) { .wrap { grid-template-columns: minmax(0, 1fr); } nav.toc { position: static; max-height: none; } }
+header.top { max-width: 1100px; margin: 0 auto; padding-block: 2.5rem 1.5rem; border-bottom: 1px solid var(--rule); }
+header.top .eyebrow { font: 600 12px/1 var(--body); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+header.top h1 { font: 400 clamp(1.9rem, 4vw, 2.6rem)/1.15 var(--display); margin: .4rem 0 .6rem; text-wrap: balance; }
+header.top p { color: var(--muted); max-width: 68ch; margin: 0; }
+nav.toc { position: sticky; top: env(safe-area-inset-top, 0px); align-self: start; padding-top: 2rem; max-height: 100vh; overflow: auto; font-size: 14px; }
+nav.toc a { display: block; color: var(--muted); text-decoration: none; padding: .25rem 0; border-left: 2px solid transparent; padding-left: .7rem; }
+nav.toc a:hover, nav.toc a:focus { color: var(--accent); border-left-color: var(--accent); outline: none; }
+main { padding-top: 2rem; min-width: 0; }
+main > section { padding-block: 1.25rem 2rem; border-bottom: 1px solid var(--rule); }
+h2 { font: 400 1.6rem/1.2 var(--display); margin: 0 0 .9rem; text-wrap: balance; }
+h3 { font: 600 1.05rem/1.3 var(--body); margin: 1.4rem 0 .5rem; }
+p, li { max-width: 72ch; }
+p { margin: .5rem 0 .8rem; }
+ul, ol { padding-left: 1.3rem; }
+li { margin: .3rem 0; }
+code, pre { font-family: var(--mono); font-size: .9em; }
+code { background: var(--code-bg); padding: .1em .35em; border-radius: 3px; }
+pre { background: var(--code-bg); padding: .8rem 1rem; border-radius: 4px; overflow-x: auto; max-width: 100%; }
+pre code { background: none; padding: 0; }
+table { border-collapse: collapse; width: 100%; font-size: 14.5px; margin: .6rem 0 1rem; }
+.scroll { overflow-x: auto; }
+th, td { text-align: left; vertical-align: top; padding: .5rem .7rem; border-bottom: 1px solid var(--rule); }
+th { font-weight: 600; color: var(--muted); font-size: 13px; letter-spacing: .03em; text-transform: uppercase; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.badge { display: inline-block; font: 700 12px/1 var(--mono); padding: .3em .5em; border-radius: 3px; letter-spacing: .04em; vertical-align: middle; }
+.e0 { color: var(--e0); background: var(--e0-bg); }
+.e1 { color: var(--e1); background: var(--e1-bg); }
+.e2 { color: var(--e2); background: var(--e2-bg); }
+.key { background: var(--accent-soft); border-left: 4px solid var(--accent); padding: .9rem 1.1rem; border-radius: 0 4px 4px 0; margin: 1rem 0; }
+.key p:last-child { margin-bottom: 0; }
+.caveat { background: var(--warn-bg); color: var(--warn-fg); padding: .8rem 1rem; border-radius: 4px; margin: 1rem 0; }
+.caveat p { margin: .3rem 0; color: inherit; }
+.flow { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .6rem; margin: 1rem 0; counter-reset: step; }
+.flow div { background: var(--surface); border: 1px solid var(--rule); border-radius: 4px; padding: .7rem .8rem; font-size: 14px; min-width: 0; }
+.flow div::before { counter-increment: step; content: counter(step); display: inline-block; font: 700 12px/1 var(--mono); color: var(--accent); margin-bottom: .35rem; }
+.flow strong { display: block; margin-bottom: .2rem; }
+dl.fields { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: .45rem 1.2rem; margin: .6rem 0 1rem; }
+@media (max-width: 560px) { dl.fields { grid-template-columns: minmax(0, 1fr); } dl.fields dd { margin-bottom: .6rem; } }
+dl.fields dt { font-family: var(--mono); font-size: .9em; color: var(--accent); }
+dl.fields dd { margin: 0; max-width: 68ch; }
+.who { font-size: 12px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+footer { max-width: 1100px; margin: 2rem auto 0; color: var(--muted); font-size: 13px; }
+a { color: var(--accent); }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+html { scroll-behavior: smooth; }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="eyebrow">SecureYourCode · field guide to the performance report</div>
+  <h1>Reading a SecureYourCode Report</h1>
+  <p>What every line of the report means, who produced it, and why it can be trusted. Written against the first run on the air-gapped machine, run <code>20261004-070041-6aa4</code>: status <code>complete</code>, 89 seconds, five findings.</p>
+</header>
+
+<div class="wrap">
+<nav class="toc" aria-label="Sections">
+  <a href="#pipeline">How a run works</a>
+  <a href="#run">Run block</a>
+  <a href="#provenance">Provenance</a>
+  <a href="#tokens">Token usage</a>
+  <a href="#reviewers">Reviewers table</a>
+  <a href="#finding">Anatomy of a finding</a>
+  <a href="#evidence">Evidence vs. confidence</a>
+  <a href="#benchmarks">Benchmarks and E2</a>
+  <a href="#critic">Critic decisions</a>
+  <a href="#thisrun">The five findings of this run</a>
+  <a href="#notes">Notes block</a>
+  <a href="#absent">What the report leaves out</a>
+  <a href="#airgap">Air-gapped specifics</a>
+  <a href="#caveats">What to say honestly</a>
+  <a href="#glossary">Glossary</a>
+</nav>
+
+<main>
+
+<section id="pipeline">
+  <h2>How a run works</h2>
+  <p>One <code>POST /analyze</code> drives seven steps. The host, a .NET program, owns every step; the model is consulted in steps 4 and 5 only, and nothing a model says can change the facts recorded in steps 1 to 3 or measured in step 6.</p>
+  <div class="flow">
+    <div><strong>Fingerprint</strong>SHA-256 of every tracked file in the repository under review, plus the commit and dirty flag.</div>
+    <div><strong>Graph</strong>Graphify builds a code graph for exactly this fingerprint, or reuses the published one.</div>
+    <div><strong>Static analysis</strong>The repository is built with the SecureYourCode Roslyn analyzer; its <code>PERF*</code> warnings become baseline candidates.</div>
+    <div><strong>Specialists</strong>Three reviewer agents (Memory, CPU, Concurrency) read code and the graph, explain the baseline candidates and may add their own findings.</div>
+    <div><strong>Critic</strong>A fourth agent challenges every candidate: keep, downgrade or remove, and may propose a benchmark from a fixed list.</div>
+    <div><strong>Verification</strong>The host runs its own benchmark programs against the code and measures. No model-written code ever runs.</div>
+    <div><strong>Report</strong>Status, provenance, usage, findings. Written as JSON and as this HTML, both at once or neither.</div>
+  </div>
+  <p>Every agent runs inside the Copilot engine, a local process, with read-only tools: it may view, grep and glob files inside the repository and query Graphify. Writes, shell commands and web access are refused by the host's permission handler, and refusals are counted in the report.</p>
+</section>
+
+<section id="run">
+  <h2>Run block</h2>
+  <dl class="fields">
+    <dt>Run</dt><dd>The run ID: UTC date and time of the start plus four random hex characters. The report folder under <code>.secureyourcode\reports</code> carries the same ID.</dd>
+    <dt>Run status</dt><dd>Describes the <em>analysis</em>, never the writing of the report. Three values, decided by fixed rules in host code:
+      <ul>
+        <li><code>complete</code>: static analysis produced valid results, all three specialists and the critic returned valid, complete answers, and none of the partial conditions occurred.</li>
+        <li><code>partial</code>: the run finished, but the source changed during it, a specialist failed after one repair attempt, the critic failed or left decisions missing, or the benchmark infrastructure itself failed. The reason is printed next to the status.</li>
+        <li><code>failed</code>: the build for static analysis failed, the agent engine could not start, or the 30-minute limit or a cancellation stopped the run before the specialists finished. The report is still written with whatever completed.</li>
+      </ul>
+      This run: <code>complete</code>.</dd>
+    <dt>Graph status</dt><dd>Separate from run status. <code>current</code>: the graph was built from exactly the fingerprint analysed. <code>stale</code>: an older graph was used and labelled. <code>none</code>: no graph, so the reviewers ran without Graphify. A run can be <code>complete</code> with a stale graph; a banner would say so. This run: <code>current</code>.</dd>
+    <dt>Started / Finished</dt><dd>UTC timestamps. This run took 89 seconds for all seven steps, including two benchmark builds.</dd>
+    <dt>Models used</dt><dd>The model names the engine reported in its usage events, one entry per distinct model. In Copilot mode this can vary per call because GitHub routes "auto"; in ApiKey mode it is the single model name configured for your endpoint.</dd>
+  </dl>
+</section>
+
+<section id="provenance">
+  <h2>Provenance</h2>
+  <p>Provenance answers "which code, exactly, and through which model backend". It exists so a finding can never be mistaken for a statement about some other version of the code.</p>
+  <dl class="fields">
+    <dt>LLM backend</dt><dd>Which of the two modes ran. <code>Copilot (model …)</code> means GitHub's hosted service with a developer's sign-in. <code>ApiKey (openai endpoint …, model …)</code> means your own OpenAI-compatible endpoint; the key itself is never shown or stored in the report.</dd>
+    <dt>Commit</dt><dd>The git commit of the repository under review at the start of the run.</dd>
+    <dt>Dirty working tree</dt><dd><code>yes</code> when the working tree had uncommitted changes. In this run it was <code>yes</code> because Husky's tool manifest and hook files had been installed by hand into the demo repository before the first start, and the host only commits the files its own installer writes. The fingerprint covers the working tree as it was, so the analysis is still exact; the flag just tells you the commit alone does not describe what was analysed.</dd>
+    <dt>Source fingerprint</dt><dd>SHA-256 over every tracked and untracked, non-ignored file's path and content. It is recomputed after the graph stage, before verification, around every benchmark and at the end of the run. Any change at any of those points downgrades or discards results. This is the mechanism behind every E2.</dd>
+    <dt>Graph built from fingerprint</dt><dd>The fingerprint the Graphify graph was extracted from. Equal to the source fingerprint here, which is what <code>current</code> means.</dd>
+  </dl>
+</section>
+
+<section id="tokens">
+  <h2>Token usage</h2>
+  <p>One row per agent session plus a total. Each row is exact, summed from the engine's per-call usage events.</p>
+  <dl class="fields">
+    <dt>Model calls</dt><dd>How many times the agent went to the model within its session. A high count means a long tool-using conversation: in this run MemoryReviewer made 23 calls while reading files and querying Graphify, VerificationReviewer 12, and CpuReviewer and ConcurrencyReviewer one call each.</dd>
+    <dt>Input / Output tokens</dt><dd>Summed over the calls. Input is large because every call re-sends the conversation so far, including file contents the agent viewed. A field no call reported would read "not reported", never 0.</dd>
+    <dt>Cost</dt><dd>In Copilot mode this is GitHub's "premium request cost units", never money. In ApiKey mode the column reads <code>not applicable (ApiKey mode)</code>: your endpoint has no such accounting, and the engine's placeholder value of 0 must not be shown as a real measurement.</dd>
+  </dl>
+  <div class="key"><p>The 23 versus 1 difference is the most informative number in this block. One call means the agent answered from the prompt alone, enriching the analyzer's candidates without opening a file. See <a href="#caveats">what to say honestly</a>.</p></div>
+</section>
+
+<section id="reviewers">
+  <h2>Reviewers table</h2>
+  <dl class="fields">
+    <dt>Reviewer</dt><dd>The four agents: MemoryReviewer, CpuReviewer, ConcurrencyReviewer (the specialists, one pillar each) and VerificationReviewer (the critic).</dd>
+    <dt>Status</dt><dd><code>completed</code> means the agent returned valid JSON in the required schema, possibly after one repair request. Other values, <code>failed</code> or <code>not_run</code>, make the run <code>partial</code> or <code>failed</code>.</dd>
+    <dt>Graphify</dt><dd><code>available, N calls</code>: the Graphify MCP server was offered to the session and the agent used its tools N times successfully. Here Memory used it 4 times; the other three had it available and chose not to use it.</dd>
+    <dt>Denied tool requests</dt><dd>How often the host refused an action: a read outside the repository, a write, a shell command, a web fetch, or a Graphify call with a disallowed argument. Zero across the board here. A non-zero value is not an error; it shows the guard rails working.</dd>
+    <dt>Notes</dt><dd>Diagnostics the host recorded about that agent's output: discarded findings and why, identity mismatches, ignored benchmark proposals. Empty in this run.</dd>
+  </dl>
+</section>
+
+<section id="finding">
+  <h2>Anatomy of a finding</h2>
+  <p>Findings are grouped by category. Each card has a header line and a field list. Who writes each field matters, so the owner is marked.</p>
+  <h3>Header line</h3>
+  <p>Example: <span class="badge e2">E2</span> <code>Roslyn</code> <code>confidence: candidate</code> <code>PERF004 Services/ReportCache.cs:28 — ReportCache.GetOrAdd</code>. That is the evidence badge, the origin label, the confidence label, then rule ID, file and line, and the enclosing symbol.</p>
+  <div class="scroll"><table>
+    <tr><th>Field</th><th>Owner</th><th>Meaning</th></tr>
+    <tr><td>Candidate ID</td><td class="who">host</td><td>First 12 hex characters of SHA-256 over <code>ruleId|file|enclosingSymbol|startLine</code>. Stable within a commit; used by the critic and the benchmarks to refer to a finding. It is also the element's anchor in the HTML.</td></tr>
+    <tr><td>Category</td><td class="who">host</td><td>Mapped from the rule ID: <code>PERF001</code> → CPU &amp; Amplification, <code>PERF003</code> → Concurrency, <code>PERF004</code> and <code>LLM-MEM-*</code> → Memory &amp; Allocation. A model cannot change it.</td></tr>
+    <tr><td>Origin</td><td class="who">host</td><td><code>Roslyn analyzer</code>: the finding started as a compiler diagnostic. <code>AI specialist (…)</code>: a model proposed it and the host validated its location.</td></tr>
+    <tr><td>Analyzer message</td><td class="who">host</td><td>The analyzer's own text, present only for Roslyn findings. Always phrased as "potential", because a compiler sees patterns, not runtime behaviour.</td></tr>
+    <tr><td>Mechanism</td><td class="who">reviewer</td><td>What grows or repeats and why. Prose from a specialist; for an unenriched candidate it reads "not analyzed by a specialist".</td></tr>
+    <tr><td>Trigger</td><td class="who">reviewer</td><td>What production input or traffic sets the mechanism off.</td></tr>
+    <tr><td>Execution path</td><td class="who">reviewer</td><td>The call chain the reviewer reports. When Graphify was used it comes from the graph; otherwise it is the reviewer's reading, and it can contain inferred names.</td></tr>
+    <tr><td>Evidence</td><td class="who">host</td><td>E0, E1 or E2 and the reason. Never assigned by a model. Explained in the next section.</td></tr>
+    <tr><td>Critic decision</td><td class="who">critic + host</td><td><code>keep</code>, <code>downgrade</code> or <code>remove</code> with the critic's rationale. The host validates that exactly one decision exists per candidate.</td></tr>
+    <tr><td>Verification</td><td class="who">host</td><td><code>verified (Kind/Scenario)</code> with the acceptance rule that held; <code>not_run: no host benchmark template applies to this candidate</code>; or a failure reason such as the rule not being met or the source changing.</td></tr>
+    <tr><td>Benchmark observations</td><td class="who">host</td><td>The three measured values, one per fresh process, for n = 10, 100 and 1000. Present only when a benchmark ran.</td></tr>
+    <tr><td>Fix direction</td><td class="who">reviewer</td><td>One sentence from a reviewer. The host never writes remediation text; if none was supplied it says "no fix direction provided".</td></tr>
+  </table></div>
+</section>
+
+<section id="evidence">
+  <h2>Evidence vs. confidence</h2>
+  <p>These are two different axes, assigned by different parties, and the report prints both because neither replaces the other.</p>
+  <div class="key">
+    <p><strong>Evidence</strong> says what was proven mechanically, and the host assigns it from facts it gathered itself. <strong>Confidence</strong> says how sure the reviewers are, and only models set or change it. A finding can have strong proof and a modest confidence label, as every E2 in this run does.</p>
+  </div>
+
+  <h3>Evidence levels</h3>
+  <div class="scroll"><table>
+    <tr><th>Level</th><th>Meaning</th><th>The host assigns it when</th><th>Model calls involved</th></tr>
+    <tr><td><span class="badge e0">E0</span></td><td>AI hypothesis</td><td>The finding came from a specialist and exists only because a model argued for it. The host validated that the file, lines and symbol are real, but the mechanism is the model's claim.</td><td>Yes, the specialist's own</td></tr>
+    <tr><td><span class="badge e1">E1</span></td><td>Deterministic compiler evidence</td><td>The finding is a <code>PERF*</code> warning from the SecureYourCode Roslyn analyzer, produced by building the repository while the fingerprint equalled the one being analysed. The compiler found the pattern in the syntax and semantic model. Nothing else earns E1.</td><td>None</td></tr>
+    <tr><td><span class="badge e2">E2</span></td><td>Independently reproduced</td><td>A host-owned benchmark program ran against the code at the finding's exact method, each of three input sizes in a fresh process, every measurement validated, and the template's acceptance rule held, with the fingerprint unchanged before, during and after.</td><td>None</td></tr>
+  </table></div>
+
+  <h3>Why E1 and E2 need no model call</h3>
+  <p>E1 is the compiler speaking. The analyzer's three rules look for specific code shapes: a query-executing call inside a loop (<code>PERF001</code>), <code>Task.WhenAll</code> over an input-sized collection (<code>PERF003</code>), growth of a static collection with no removal anywhere in the type (<code>PERF004</code>). A warning either fires or it does not; there is no judgement to delegate. The host records the warning as a baseline candidate before any agent starts, and a model can later explain it but can never remove, relabel or move it.</p>
+  <p>E2 is a measurement. The host copies a small benchmark program of its own, points it at the repository, builds it once, and runs it three times with n = 10, 100 and 1000, each time in a new process so nothing carries over. Each process prints one number. The host checks the numbers against a rule fixed in code. The model's only role is upstream: the critic may <em>propose</em> that a benchmark be run, by naming a kind and scenario from a fixed list, and the host decides whether that proposal is even applicable. For the P1 seam the host runs the benchmark automatically, proposal or not.</p>
+
+  <h3>Confidence labels</h3>
+  <div class="scroll"><table>
+    <tr><th>Label</th><th>Who sets it</th><th>Meaning</th></tr>
+    <tr><td><code>candidate</code></td><td>host default</td><td>Every Roslyn baseline candidate starts here: the analyzer saw the pattern, nobody has vouched for it further. A specialist may leave it as is.</td></tr>
+    <tr><td><code>strong</code></td><td>a specialist</td><td>The specialist read the code and is confident the mechanism is real. When several specialists touch the same candidate, the higher confidence wins.</td></tr>
+    <tr><td><code>low</code></td><td>the critic</td><td>Set by a <code>downgrade</code> decision. The finding moves to the "Low-confidence candidates" section. Evidence is untouched: a downgraded E1 stays E1.</td></tr>
+  </table></div>
+  <p>So in this run the two E2 findings say <code>confidence: candidate</code> for a simple reason: CpuReviewer and ConcurrencyReviewer enriched them in one model call each and did not raise the label, and the critic kept them without changing it. Meanwhile the host measured N+1 repository calls and unbounded cache growth directly. If someone asks which to believe, the answer is that E2 is the stronger statement: it is a reproduced measurement, while the confidence label is an opinion the reviewers happened not to upgrade. The one <code>strong</code> label in the run belongs to the E0 finding, which is exactly the opposite case: a confident model with no mechanical proof yet.</p>
+</section>
+
+<section id="benchmarks">
+  <h2>Benchmarks and E2</h2>
+  <p>Three benchmark templates exist, each bound to one method of the demo project, called its seam. A template can only ever verify the code it was written for; seam matching compares type and method name, which is what stops the P1 benchmark from marking P5, another <code>PERF001</code> in a different method, as E2.</p>
+  <div class="scroll"><table>
+    <tr><th>Template</th><th>Seam</th><th>Measures</th><th>Acceptance rule for E2</th><th>When it runs</th></tr>
+    <tr><td><code>RepositoryCallAmplification / OrderCustomerLookup</code></td><td><code>OrderSummaryService.BuildSummariesAsync</code></td><td>Repository calls made for n orders with distinct customers</td><td>value(n) ≥ 0.9·n for every n, and value(1000) ≥ 50·value(10)</td><td>Automatically for every <code>PERF001</code> at this seam not removed by the critic</td></tr>
+    <tr><td><code>CollectionGrowth / ReportCache</code></td><td><code>ReportCache.GetOrAdd</code></td><td>Entries retained in the static cache after n distinct keys and a forced full garbage collection</td><td>value(n) ≥ 0.9·n for every n</td><td>Only when the critic proposes it for a kept candidate at this seam</td></tr>
+    <tr><td><code>TaskFanOut / NotificationRecipients</code></td><td><code>NotificationService.NotifyAllAsync</code></td><td>Tasks started for one call with n recipients</td><td>value(n) ≥ 0.9·n for every n</td><td>Only when the critic proposes it for a kept candidate at this seam</td></tr>
+  </table></div>
+  <h3>Reading "n=10: 10, n=100: 100, n=1000: 1000"</h3>
+  <p>For P1 this reads: 10 orders caused 10 repository calls, 100 caused 100, 1000 caused 1000. One call per order is the N+1 pattern the analyzer suspected, now measured. The second clause of the rule, value(1000) ≥ 50·value(10), rules out a fixed overhead that happens to be large. For P3 it reads: after inserting 10, 100 and 1000 distinct keys and forcing a full garbage collection, the cache still held 10, 100 and 1000 entries. Nothing was ever evicted, so memory grows with the number of distinct keys for the life of the process.</p>
+  <h3>Why fresh processes</h3>
+  <p>The cache is static. If the three sizes ran in one process the counts would pile up (10, then 110, then 1110) and prove nothing about any single size. A fresh process per n makes the three values independent. The 3-minute benchmark budget covers the build and all three processes.</p>
+  <h3>Source binding</h3>
+  <p>E2 must prove the same source state that produced the finding. The fingerprint is recomputed before verification starts, before and after each benchmark, and at the end of the run. A mismatch at any point discards that benchmark's result or, at the end, reverts every E2 of the run to its previous level and marks the run <code>partial / source_changed</code>. No E2 in a <code>complete</code> run can refer to code that moved under it.</p>
+</section>
+
+<section id="critic">
+  <h2>Critic decisions</h2>
+  <p>The critic must challenge every candidate and look for counter-evidence about the same mechanism, for example a cache that is actually bounded elsewhere, or a loop whose repository already batches. Exactly one decision per candidate is required; the host asks once for a repair if any is missing, and marks any still missing as "not reviewed by critic" while making the run <code>partial</code>.</p>
+  <div class="scroll"><table>
+    <tr><th>Decision</th><th>Where the finding goes</th><th>Confidence</th><th>Evidence</th><th>Counted in the metrics</th></tr>
+    <tr><td><code>keep</code></td><td>Its category section</td><td>As reported</td><td>Unchanged</td><td>Yes</td></tr>
+    <tr><td><code>downgrade</code></td><td>"Low-confidence candidates"</td><td>Set to <code>low</code></td><td>Unchanged</td><td>Yes</td></tr>
+    <tr><td><code>remove</code></td><td>"Rejected by critic", collapsed, with the rationale</td><td>—</td><td>—</td><td>No</td></tr>
+  </table></div>
+  <p>The critic may also propose at most two benchmarks, for kept candidates only, by naming a kind and scenario from the table above. It never writes code. A proposal whose pair is not in the table, or whose candidate is not at that template's seam, is ignored and noted in the report. In this run the critic proposed both optional benchmarks that apply to the demo, and both were accepted; the Notes block records that.</p>
+</section>
+
+<section id="thisrun">
+  <h2>The five findings of this run</h2>
+  <p>The demo project plants five problems (P1 to P5) and four clean counterparts (N1 to N4), written down in <code>test-assets/ground-truth.json</code> before any agent code existed and never changed since. The evaluator matches final findings to cases one to one by file, overlapping lines and category.</p>
+  <div class="scroll"><table>
+    <tr><th>Case</th><th>Finding in the report</th><th>Evidence</th><th>Confidence</th><th>How it got there</th></tr>
+    <tr><td>P1</td><td><code>PERF001</code> OrderSummaryService.BuildSummariesAsync</td><td><span class="badge e2">E2</span></td><td>candidate</td><td>Analyzer warning → kept by the critic → required benchmark ran automatically: 10/100/1000 repository calls.</td></tr>
+    <tr><td>P2</td><td><code>PERF003</code> NotificationService.NotifyAllAsync</td><td><span class="badge e1">E1</span></td><td>candidate</td><td>Analyzer warning → kept. The optional TaskFanOut benchmark was not proposed this time, so it stays at compiler evidence. In an earlier Copilot-mode run the critic did propose it and P2 reached E2; the two proposals it used here went to P1 and P3 instead.</td></tr>
+    <tr><td>P3</td><td><code>PERF004</code> ReportCache.GetOrAdd</td><td><span class="badge e2">E2</span></td><td>candidate</td><td>Analyzer warning → kept → the critic proposed CollectionGrowth/ReportCache → accepted and verified: 10/100/1000 entries retained after full GC.</td></tr>
+    <tr><td>P4</td><td><code>LLM-MEM-01</code> OrderAuditHandler constructor</td><td><span class="badge e0">E0</span></td><td>strong</td><td>No analyzer rule covers it. MemoryReviewer found it by reading the code and the graph: a scoped handler subscribes to a singleton's event and never unsubscribes. The host validated the location and recomputed the symbol; the critic kept it. No benchmark template applies.</td></tr>
+    <tr><td>P5</td><td><code>PERF001</code> InvoiceService.BuildInvoiceLinesAsync</td><td><span class="badge e1">E1</span></td><td>candidate</td><td>Analyzer warning → kept. Not at the P1 benchmark's seam, so no E2 is possible for it by design. In Copilot-mode runs the critic downgraded it to low confidence; here it kept it.</td></tr>
+  </table></div>
+  <p>No finding fell in a clean region (N1 to N4) and no candidate was rejected. Against the ground truth that is 5 true positives, 0 false positives, 0 false negatives: precision 1.0, recall 1.0, on a <code>complete</code> run, which is the only kind that counts toward the target of 0.8 for both. The evaluator writes this to <code>metrics.json</code> next to the report.</p>
+</section>
+
+<section id="notes">
+  <h2>Notes block</h2>
+  <p>Free-text notes the host adds about the run as a whole. The three in this report:</p>
+  <ul>
+    <li><strong>Benchmark proposal accepted: RepositoryCallAmplification/OrderCustomerLookup for d36b9de2871f.</strong> The critic's proposal matched a template and a seam, so the host ran it. For this template the run would have happened anyway, since it is required for its seam.</li>
+    <li><strong>Benchmark proposal accepted: CollectionGrowth/ReportCache for 059d11969b52.</strong> The optional benchmark that gave P3 its E2.</li>
+    <li><strong>E2 means verified by a host-owned benchmark template bound to a demo seam; in the hackathon it applies to the demo project only.</strong> A deliberate scope statement. Three templates exist and they know three methods of the demo project. Any other repository gets E0 and E1 only until templates are written for its seams.</li>
+  </ul>
+</section>
+
+<section id="absent">
+  <h2>What the report leaves out, on purpose</h2>
+  <ul>
+    <li><strong>No overall score and no severity.</strong> The plan forbids both. A single number would hide the difference between a measured fact and a hypothesis; the evidence badge and the confidence label carry that information separately.</li>
+    <li><strong>No remediation written by the host.</strong> Every fix direction is a reviewer's sentence, attributed as such. The host never invents advice.</li>
+    <li><strong>No confirmed-leak language without E2.</strong> Analyzer messages say "potential". Only a verified benchmark earns stronger wording, and even then the report says what was measured rather than drawing the conclusion for you.</li>
+    <li><strong>No trust in any dynamic string.</strong> Every value a model or the repository supplied is HTML-encoded in the page, so a <code>&lt;script&gt;</code> copied from a source comment appears as text.</li>
+  </ul>
+</section>
+
+<section id="airgap">
+  <h2>Air-gapped specifics</h2>
+  <p>This run used ApiKey mode: the same agent engine, prompts, tools and permission handler as in Copilot mode, but with every model request sent to the company's own OpenAI-compatible endpoint with an API key. No GitHub account, no Copilot subscription and no traffic outside the company network were involved. Three lines in the report show it:</p>
+  <ul>
+    <li><strong>LLM backend</strong> names the mode, the endpoint and the model, never the key.</li>
+    <li><strong>Models used</strong> is the single internal model name, since there is no routing between models.</li>
+    <li><strong>Cost</strong> reads "not applicable (ApiKey mode)" throughout.</li>
+  </ul>
+  <p>The run also settled the one question that could not be tested outside the network: the internal model handles OpenAI-style function calling well enough for the agents to read files and query the graph. MemoryReviewer's 23 calls, 4 of them Graphify queries, and its discovery of P4 are the proof.</p>
+</section>
+
+<section id="caveats">
+  <h2>What to say honestly</h2>
+  <div class="caveat">
+    <p><strong>One run.</strong> Precision and recall of 1.0 come from a single <code>complete</code> run on the demo project. Model output varies between runs; the plan records metrics from one run by design and says so.</p>
+    <p><strong>Two specialists did not use their tools.</strong> CpuReviewer and ConcurrencyReviewer answered in one model call each with no file reads and no Graphify queries. Their findings were correct because the analyzer had already located them; their "execution path" text is partly inferred, for example the method name <code>NotifyAsync(r)</code>. On a larger repository this behaviour would matter more. The prompts were deliberately not tuned against the known answers.</p>
+    <p><strong>E2 is scoped to the demo seams.</strong> The three benchmark templates verify three known methods. This is a demonstration of the mechanism, not a general verifier.</p>
+    <p><strong>P2 reached E1, not E2, this time.</strong> The optional TaskFanOut benchmark depends on a critic proposal, and the critic spent its two proposals on P1 and P3.</p>
+    <p><strong>Dirty working tree.</strong> Caused by the manual Husky installation in the demo repository, not by the analysis. The fingerprint still describes the analysed files exactly.</p>
+  </div>
+</section>
+
+<section id="glossary">
+  <h2>Glossary</h2>
+  <dl class="fields">
+    <dt>Baseline candidate</dt><dd>A finding created by the host from an analyzer warning before any agent runs. Its identity fields can never be changed by a model.</dd>
+    <dt>Enrichment</dt><dd>A specialist filling in mechanism, trigger, execution path, confidence and fix direction on a baseline candidate. Nothing else.</dd>
+    <dt>LLM-only finding</dt><dd>A finding a specialist proposed that matches no analyzer warning. The host checks the file exists in the repository, the lines are valid, recomputes the enclosing symbol itself, and requires an <code>LLM-*</code> rule ID. It becomes an E0 candidate or is discarded with a recorded reason.</dd>
+    <dt>Graphify</dt><dd>A code-graph tool. The host extracts a graph of the repository per commit and offers four read-only query tools to the agents through the Model Context Protocol.</dd>
+    <dt>Seam</dt><dd>A public method of the demo project that a benchmark template is written against.</dd>
+    <dt>Fingerprint</dt><dd>SHA-256 over all tracked and untracked non-ignored files. The identity of the source state; see Provenance.</dd>
+    <dt>Fresh process</dt><dd>Each benchmark size runs in its own newly started process so static state cannot leak between measurements.</dd>
+    <dt>Denied tool request</dt><dd>An agent action the host's permission handler refused. Counted per agent in the Reviewers table.</dd>
+    <dt>Premium request cost units</dt><dd>GitHub Copilot's accounting unit for model calls. Not money, and not applicable to a self-hosted endpoint.</dd>
+  </dl>
+</section>
+
+</main>
+</div>
+
+<footer>Source of the rules quoted here: <code>docs/IMPLEMENTATION_PLAN_HACKATHON_v1.5.md</code> sections 4.3 to 4.7 and 5, and the host code under <code>src/SecureYourCode.Agent</code>. Decisions and measurements are recorded in <code>docs/architecture.md</code>.</footer>
+
+</body>
+</html>
