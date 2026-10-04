@@ -14,6 +14,9 @@ Shared across the team. States: not-started, in-progress, passed, fallback, bloc
 | H6 Reports | passed | `report.json` + self-contained `report.html` (no script, CSP, every dynamic value HTML-encoded), transactional publication with `latest.txt`, HTTP 500 on publication failure without changing the run status. 131/131 tests; live run published both files and the HTML was inspected. See `docs/architecture.md` › H6. Tag `h6` |
 | H7 Evaluation + demo | passed | `tools/evaluate` (`.ps1` + `.sh` over one tested .NET console; §5 semantics with one-to-one maximum matching; `metrics.json` in the report folder). One live demo run following `demo/DEMO.md`: `complete`, exactly P1–P5, **precision 1.0, recall 1.0, target met**. `demo/fallback/` recorded from that run and labelled. Cross-pillar duplicate: decided, no change (measured 1.0 precision; see `docs/architecture.md` › H7). 141/141 tests. Tag `h7` |
 
+| H8 Air-gapped mode | passed | Team request after H7, not a plan milestone: ApiKey backend, internal dependency sources, npm CLI binary as runtime, SDK 1.0.13/1.0.15, Graphify 0.9.62/0.9.71. One live air-gapped run `complete`, precision 1.0, recall 1.0. See `docs/architecture.md` › H8. Tag `h8` (first H8 commit) |
+| H8 audit against plan v1.5 | passed | Nine gaps closed (A1–A9 in `docs/architecture.md` › H8 audit). 176/176 tests (20 analyzer, 156 host) |
+
 Definition-of-Done items (plan §7): **all 14 met**, see `docs/implementation-summary.md`.
 
 ## Next concrete action
@@ -21,4 +24,5 @@ Definition-of-Done items (plan §7): **all 14 met**, see `docs/implementation-su
 1. Every developer: `python tools/setup.py --login` (see `README.md`).
 2. Branching: all implementation work goes on `implementation/hackathon`, one `H<n>: ...` commit per milestone, each tagged `h<n>` (`git checkout h1` to inspect a milestone, `git revert <commit>` to undo one). Run `git pull --rebase` before pushing; use a short-lived personal branch off `implementation/hackathon` for larger parallel work and merge it back promptly. `main` stays untouched until the demo is ready.
 3. Developers who signed in before H1: sign in again with `python tools/setup.py --login` (isolated mode needs the plaintext-config sign-in; see `README.md`).
-4. All milestones are done. Rehearse the demo with `demo/DEMO.md` on the machine that will present (each run uses about 16 premium request cost units of that developer's Copilot plan). `main` is updated only when the team decides the demo is ready.
+4. Air-gapped PCs: set `AnalyzerTestHarness=Standalone` (and `CopilotSdkVersion`, `CopilotCliBinaryPath` as needed); see `docs/AIRGAPPED_MANUAL_SETUP.md`.
+5. All milestones are done. Rehearse the demo with `demo/DEMO.md` on the machine that will present (each run uses about 16 premium request cost units of that developer's Copilot plan). `main` is updated only when the team decides the demo is ready.

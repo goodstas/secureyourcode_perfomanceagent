@@ -54,6 +54,13 @@ public sealed class Orchestrator(
             // Child processes (builds, Graphify, the Copilot runtime) are stopped by their owners on cancellation.
             RecordStop(run, requestAborted.IsCancellationRequested ? "cancelled" : "timeout");
         }
+        catch (Exception exception)
+        {
+            // RunAsync owns the failure report (plan §4.8): an unexpected error still ends with a computed status and
+            // published reports holding whatever completed, never an HTTP 500 without a report.
+            logger.LogError(exception, "Run {RunId} stopped by an unexpected error", run.Report.Run.RunId);
+            RecordStop(run, $"internal_error: {exception.GetType().Name}: {exception.Message}");
+        }
 
         // The run status is decided here and never depends on publication (plan §4.7).
         Finish(run);
@@ -84,12 +91,17 @@ public sealed class Orchestrator(
         report.Provenance.Dirty = state.Dirty;
 
         // 2. Graph: current, stale (used and labelled), or none.
-        var (graphStatus, graph) = await graphs.SelectAsync(fingerprint, ct);
+        var selection = await graphs.SelectAsync(fingerprint, ct);
+        var (graphStatus, graph) = (selection.Status, selection.Graph);
         report.Run.GraphStatus = graphStatus;
         report.Provenance.GraphFingerprint = graph?.Fingerprint;
         if (graph is null)
         {
-            report.Notes.Add("Graphify unavailable to reviewers: no graph could be built for this run.");
+            report.Notes.Add($"Graphify unavailable to reviewers: {selection.Problem ?? "no graph could be built for this run"}.");
+        }
+        else if (selection.Problem is not null)
+        {
+            report.Notes.Add($"Reviewers used an older graph (graph status {graphStatus}): {selection.Problem}.");
         }
 
         // 3. Source check after the graph stage.
@@ -301,7 +313,10 @@ public sealed class Orchestrator(
         await File.WriteAllTextAsync(Path.Combine(directory, $"{reviewer.Name}.reply{attempt}.txt"), reply, CancellationToken.None);
     }
 
-    /// <summary>Timeout/cancellation: failed only if it stopped the run before all specialists finished (plan §4.7).</summary>
+    /// <summary>
+    /// Timeout, cancellation or an unexpected error: failed only if it stopped the run before all specialists finished
+    /// (plan §4.7); afterwards the critic or the verification stage counts as failed, which makes the run partial.
+    /// </summary>
     private static void RecordStop(RunState run, string reason)
     {
         if (!run.SpecialistsFinished)

@@ -19,7 +19,7 @@ public sealed record UsageTotal(double? Value, int ReportedCalls, int TotalCalls
         var sum = reported.Sum();
         var text = sum.ToString("0.##", CultureInfo.InvariantCulture) + (unit is null ? "" : " " + unit);
         return new UsageTotal(sum, reported.Count, values.Count,
-            reported.Count == values.Count ? text : $"{text} (partial: {reported.Count} of {values.Count} calls reported)");
+            reported.Count == values.Count ? text : $"{text}, partial ({reported.Count} of {values.Count} calls reported)");
     }
 }
 

@@ -253,14 +253,14 @@ public class TokenUsageAndStatusTests
         ]);
 
         var memory = usage.Sessions[0];
-        Assert.Equal((2, "150", "10 (partial: 1 of 2 calls reported)", "2 premium request cost units"),
+        Assert.Equal((2, "150", "10, partial (1 of 2 calls reported)", "2 premium request cost units"),
             (memory.ModelCalls, memory.InputTokens.Display, memory.OutputTokens.Display, memory.Cost.Display));
         Assert.Equal(["m1"], memory.Models);
 
         var cpu = usage.Sessions[1];
         Assert.Equal(("not reported", "not reported", null), (cpu.InputTokens.Display, cpu.Cost.Display, cpu.Cost.Value));
 
-        Assert.Equal((3, "150 (partial: 2 of 3 calls reported)", "2 premium request cost units (partial: 2 of 3 calls reported)"),
+        Assert.Equal((3, "150, partial (2 of 3 calls reported)", "2 premium request cost units, partial (2 of 3 calls reported)"),
             (usage.Total.ModelCalls, usage.Total.InputTokens.Display, usage.Total.Cost.Display));
     }
 

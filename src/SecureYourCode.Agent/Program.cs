@@ -15,8 +15,8 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 var options = builder.Configuration.GetSection(SecureYourCodeOptions.SectionName).Get<SecureYourCodeOptions>()
     ?? new SecureYourCodeOptions();
 var paths = StatePaths.Resolve(options);
+var accessToken = LocalAccessToken.Ensure(paths.AccessTokenFile); // plan §4.2: first, as soon as StateRoot is known
 var llm = LlmSettings.Resolve(options); // fails fast on a misconfigured mode; the two modes never fall back to each other
-var accessToken = LocalAccessToken.Ensure(paths.AccessTokenFile);
 
 builder.Services.AddSingleton(options);
 builder.Services.AddSingleton(paths);

@@ -146,6 +146,15 @@ public sealed class BenchmarkVerifier(IBenchmarkRunner runner, IRepositorySnapsh
             candidate.Verification = new VerificationResult("failed", template.Label, timeout);
             return timeout;
         }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // For example dotnet could not be started or the template could not be copied: the verification
+            // infrastructure failed (run status partial, plan §4.7), and the finding keeps its E0/E1 level.
+            logger.LogWarning(exception, "Benchmark {Template} for {Candidate} failed", template.Label, candidate.CandidateId);
+            var failure = $"benchmark infrastructure error: {exception.Message}";
+            candidate.Verification = new VerificationResult("failed", template.Label, failure);
+            return failure;
+        }
 
         if (before != analysisFingerprint || after != analysisFingerprint)
         {

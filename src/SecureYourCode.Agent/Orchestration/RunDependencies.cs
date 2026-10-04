@@ -25,28 +25,59 @@ public sealed class RepositorySnapshot(StatePaths paths) : IRepositorySnapshot
     public Task<RepoState> ReadStateAsync(CancellationToken cancellationToken) => RepoState.ReadAsync(paths.RepoPath, cancellationToken);
 }
 
+/// <summary>The graph for one run: its status, the graph the reviewers use (if any), and why it is not current.</summary>
+public sealed record GraphSelection(string Status, PublishedGraph? Graph, string? Problem = null);
+
 public interface IGraphSelector
 {
-    /// <summary>Graph status for the run (plan §4.8 step 2) and the graph the reviewers use, if any.</summary>
-    Task<(string Status, PublishedGraph? Graph)> SelectAsync(string analysisFingerprint, CancellationToken cancellationToken);
+    /// <summary>
+    /// Graph status for the run (plan §4.8 step 2) and the graph the reviewers use, if any. Only the caller's
+    /// cancellation throws: a graph problem ends as "stale" or "none" with <see cref="GraphSelection.Problem"/> set.
+    /// </summary>
+    Task<GraphSelection> SelectAsync(string analysisFingerprint, CancellationToken cancellationToken);
 }
 
-public sealed class GraphSelector(GraphifyUpdater updater) : IGraphSelector
+public sealed class GraphSelector(GraphifyUpdater updater, ILogger<GraphSelector> logger) : IGraphSelector
 {
-    public async Task<(string Status, PublishedGraph? Graph)> SelectAsync(string analysisFingerprint, CancellationToken cancellationToken)
+    public async Task<GraphSelection> SelectAsync(string analysisFingerprint, CancellationToken cancellationToken)
     {
-        if (await updater.TryGetPublishedAsync(analysisFingerprint, cancellationToken) is { } published)
+        try
         {
-            return (GraphStatuses.Current, published);
+            if (await updater.TryGetPublishedAsync(analysisFingerprint, cancellationToken) is { } published)
+            {
+                return new GraphSelection(GraphStatuses.Current, published);
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            // The installed Graphify version could not be read: Graphify cannot serve any graph, current or stale (plan §4.1).
+            logger.LogWarning(exception, "Graphify unavailable");
+            return new GraphSelection(GraphStatuses.None, null, $"the installed Graphify version could not be read ({exception.Message})");
         }
 
         var refreshed = await updater.RefreshAsync(cancellationToken);
         if (refreshed.Status == GraphRefreshStatus.Current && refreshed.Graph!.Fingerprint == analysisFingerprint)
         {
-            return (GraphStatuses.Current, refreshed.Graph);
+            return new GraphSelection(GraphStatuses.Current, refreshed.Graph);
         }
 
-        return updater.ReadCurrent() is { } older ? (GraphStatuses.Stale, older) : (GraphStatuses.None, null);
+        var problem = refreshed.Status == GraphRefreshStatus.Failed
+            ? $"graph refresh failed ({refreshed.Reason})"
+            : "the source changed before the graph refresh, so the newest graph is for another fingerprint";
+        PublishedGraph? older;
+        try
+        {
+            older = updater.ReadCurrent();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            logger.LogWarning(exception, "Could not read the current graph pointer");
+            older = null;
+        }
+
+        return older is null
+            ? new GraphSelection(GraphStatuses.None, null, problem)
+            : new GraphSelection(GraphStatuses.Stale, older, problem);
     }
 }
 

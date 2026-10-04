@@ -63,13 +63,13 @@ public class OrchestratorTests
 
     private static Harness Create(TestEnvironment env, FakeReviewerClient client, string[]? fingerprints = null,
         Func<StaticAnalysisResult>? analysis = null, OrchestrationTimeouts? timeouts = null, string graphStatus = GraphStatuses.Current,
-        IVerificationStage? verifier = null, LlmSettings? llm = null)
+        IVerificationStage? verifier = null, LlmSettings? llm = null, string? graphProblem = null)
     {
         var repository = new FakeRepository(fingerprints ?? ["fp1"]);
         var staticAnalysis = new FakeStaticAnalysis(analysis ?? Baseline);
         var published = new List<Report>();
         var graph = graphStatus == GraphStatuses.None ? null : new PublishedGraph("fp1", "0.9.71", "g", "g/graph.json");
-        var orchestrator = new Orchestrator(repository, new FakeGraphs(graphStatus, graph), staticAnalysis, new FakeClientFactory(client),
+        var orchestrator = new Orchestrator(repository, new FakeGraphs(graphStatus, graph, graphProblem), staticAnalysis, new FakeClientFactory(client),
             verifier ?? new FakeVerifier(), new RecordingPublisher(published), env.Paths, llm ?? CopilotLlm, timeouts ?? OrchestrationTimeouts.Default,
             TimeProvider.System, NullLogger<Orchestrator>.Instance);
         return new Harness(orchestrator, repository, staticAnalysis, client, published);
@@ -363,6 +363,51 @@ public class OrchestratorTests
         Assert.Contains("disk full", error.Message);
     }
 
+    // H8 audit: RunAsync owns the failure report (plan §4.8), so an unexpected error still ends with a computed status
+    // and published reports, never an HTTP 500 without a report.
+    [Fact]
+    public async Task UnexpectedErrorBeforeTheSpecialists_IsFailed_AndTheReportIsStillPublished()
+    {
+        using var env = await new TestEnvironment().WithDemoRepoAsync();
+        var h = Create(env, HappyClient(), analysis: () => throw new InvalidOperationException("dotnet could not be started"));
+
+        var report = await h.Orchestrator.RunAsync(CancellationToken.None);
+
+        Assert.Equal((RunStatuses.Failed, "internal_error: InvalidOperationException: dotnet could not be started"), (report.Run.Status, report.Run.Reason));
+        Assert.Same(report, Assert.Single(h.Published));
+        Assert.Empty(h.Client.Sent);
+    }
+
+    [Fact]
+    public async Task UnexpectedErrorDuringVerification_IsPartial_AndEveryFindingIsKept()
+    {
+        using var env = await new TestEnvironment().WithDemoRepoAsync();
+        var h = Create(env, HappyClient(), verifier: new ThrowingVerifier());
+
+        var report = await h.Orchestrator.RunAsync(CancellationToken.None);
+
+        Assert.Equal((RunStatuses.Partial, "verification_failed: internal_error: InvalidOperationException: boom"), (report.Run.Status, report.Run.Reason));
+        Assert.Equal([P1, P3, P4], report.Findings.Select(f => f.CandidateId));
+        Assert.All(report.Findings, f => Assert.Equal(Decisions.Keep, f.CriticDecision));
+        Assert.Same(report, Assert.Single(h.Published));
+    }
+
+    [Fact]
+    public async Task GraphProblems_AreExplainedInTheReport()
+    {
+        using var env = await new TestEnvironment().WithDemoRepoAsync();
+
+        var none = await Create(env, HappyClient(), graphStatus: GraphStatuses.None, graphProblem: "graph refresh failed (graph_refresh_timeout)")
+            .Orchestrator.RunAsync(CancellationToken.None);
+        var stale = await Create(env, HappyClient(), graphStatus: GraphStatuses.Stale, graphProblem: "graph refresh failed (graph_refresh_timeout)")
+            .Orchestrator.RunAsync(CancellationToken.None);
+
+        Assert.Equal(RunStatuses.Complete, none.Run.Status);
+        Assert.Contains("Graphify unavailable to reviewers: graph refresh failed (graph_refresh_timeout).", none.Notes);
+        Assert.Equal((RunStatuses.Complete, GraphStatuses.Stale), (stale.Run.Status, stale.Run.GraphStatus));
+        Assert.Contains("Reviewers used an older graph (graph status stale): graph refresh failed (graph_refresh_timeout).", stale.Notes);
+    }
+
     [Fact]
     public async Task GateAllowsOneRunAtATime()
     {
@@ -385,10 +430,10 @@ public class OrchestratorTests
         public Task<RepoState> ReadStateAsync(CancellationToken cancellationToken) => Task.FromResult(new RepoState("abc1234def", false));
     }
 
-    private sealed class FakeGraphs(string status, PublishedGraph? graph) : IGraphSelector
+    private sealed class FakeGraphs(string status, PublishedGraph? graph, string? problem = null) : IGraphSelector
     {
-        public Task<(string Status, PublishedGraph? Graph)> SelectAsync(string analysisFingerprint, CancellationToken cancellationToken) =>
-            Task.FromResult((status, graph));
+        public Task<GraphSelection> SelectAsync(string analysisFingerprint, CancellationToken cancellationToken) =>
+            Task.FromResult(new GraphSelection(status, graph, problem));
     }
 
     private sealed class FakeStaticAnalysis(Func<StaticAnalysisResult> result) : IStaticAnalysis
@@ -423,6 +468,14 @@ public class OrchestratorTests
             var summary = new VerificationSummary { InfrastructureFailure = infrastructureFailure };
             return summary;
         }
+    }
+
+    private sealed class ThrowingVerifier : IVerificationStage
+    {
+        public Task<VerificationSummary> VerifyAsync(IReadOnlyList<Candidate> candidates,
+            IReadOnlyList<(BenchmarkProposal Proposal, BenchmarkTemplate Template)> acceptedProposals,
+            string analysisFingerprint, string runDirectory, CancellationToken cancellationToken) =>
+            Task.FromException<VerificationSummary>(new InvalidOperationException("boom"));
     }
 
     private sealed class ThrowingPublisher : IReportPublisher

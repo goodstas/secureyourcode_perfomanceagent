@@ -148,6 +148,15 @@ public class BenchmarkVerifierTests
     }
 
     [Fact]
+    public async Task RunnerException_IsAnInfrastructureFailure_NotARunCrash()
+    {
+        var p1 = P1();
+        var (summary, _) = await Verify([p1], _ => throw new System.ComponentModel.Win32Exception("dotnet could not be started"));
+        Assert.Equal((EvidenceLevels.E1, "failed"), (p1.Evidence, p1.Verification.Status));
+        Assert.Contains("benchmark infrastructure error: dotnet could not be started", summary.InfrastructureFailure);
+    }
+
+    [Fact]
     public async Task SourceChangedBeforeVerification_SkipsEverything()
     {
         var p1 = P1();

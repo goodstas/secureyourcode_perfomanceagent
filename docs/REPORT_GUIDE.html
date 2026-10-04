@@ -123,7 +123,7 @@ html { scroll-behavior: smooth; }
   <h2>How a run works</h2>
   <p>One <code>POST /analyze</code> drives seven steps. The host, a .NET program, owns every step; the model is consulted in steps 4 and 5 only, and nothing a model says can change the facts recorded in steps 1 to 3 or measured in step 6.</p>
   <div class="flow">
-    <div><strong>Fingerprint</strong>SHA-256 of every tracked file in the repository under review, plus the commit and dirty flag.</div>
+    <div><strong>Fingerprint</strong>SHA-256 over every file git would track in the repository under review (committed or not, minus ignored files such as <code>bin/</code> and <code>obj/</code>). The commit SHA and dirty flag are recorded next to it.</div>
     <div><strong>Graph</strong>Graphify builds a code graph for exactly this fingerprint, or reuses the published one.</div>
     <div><strong>Static analysis</strong>The repository is built with the SecureYourCode Roslyn analyzer; its <code>PERF*</code> warnings become baseline candidates.</div>
     <div><strong>Specialists</strong>Three reviewer agents (Memory, CPU, Concurrency) read code and the graph, explain the baseline candidates and may add their own findings.</div>
@@ -157,7 +157,7 @@ html { scroll-behavior: smooth; }
   <dl class="fields">
     <dt>LLM backend</dt><dd>Which of the two modes ran. <code>Copilot (model …)</code> means GitHub's hosted service with a developer's sign-in. <code>ApiKey (openai endpoint …, model …)</code> means your own OpenAI-compatible endpoint; the key itself is never shown or stored in the report.</dd>
     <dt>Commit</dt><dd>The git commit of the repository under review at the start of the run.</dd>
-    <dt>Dirty working tree</dt><dd><code>yes</code> when the working tree had uncommitted changes. In this run it was <code>yes</code> because Husky's tool manifest and hook files had been installed by hand into the demo repository before the first start, and the host only commits the files its own installer writes. The fingerprint covers the working tree as it was, so the analysis is still exact; the flag just tells you the commit alone does not describe what was analysed.</dd>
+    <dt>Dirty working tree</dt><dd><code>yes</code> when the working tree had uncommitted changes. In this run it was <code>yes</code>. The most likely cause is the manual Husky installation in the demo repository before the first start: the host only commits the files its own installer writes, so hand-installed tool files stay uncommitted. This was not checked on the machine; <code>git status</code> in the demo repository shows exactly which files differ. The fingerprint covers the working tree as it was, so the analysis is still exact; the flag just tells you the commit alone does not describe what was analysed.</dd>
     <dt>Source fingerprint</dt><dd>SHA-256 over every tracked and untracked, non-ignored file's path and content. It is recomputed after the graph stage, before verification, around every benchmark and at the end of the run. Any change at any of those points downgrades or discards results. This is the mechanism behind every E2.</dd>
     <dt>Graph built from fingerprint</dt><dd>The fingerprint the Graphify graph was extracted from. Equal to the source fingerprint here, which is what <code>current</code> means.</dd>
   </dl>
@@ -317,7 +317,7 @@ html { scroll-behavior: smooth; }
     <p><strong>Two specialists did not use their tools.</strong> CpuReviewer and ConcurrencyReviewer answered in one model call each with no file reads and no Graphify queries. Their findings were correct because the analyzer had already located them; their "execution path" text is partly inferred, for example the method name <code>NotifyAsync(r)</code>. On a larger repository this behaviour would matter more. The prompts were deliberately not tuned against the known answers.</p>
     <p><strong>E2 is scoped to the demo seams.</strong> The three benchmark templates verify three known methods. This is a demonstration of the mechanism, not a general verifier.</p>
     <p><strong>P2 reached E1, not E2, this time.</strong> The optional TaskFanOut benchmark depends on a critic proposal, and the critic spent its two proposals on P1 and P3.</p>
-    <p><strong>Dirty working tree.</strong> Caused by the manual Husky installation in the demo repository, not by the analysis. The fingerprint still describes the analysed files exactly.</p>
+    <p><strong>Dirty working tree.</strong> Most likely left by the manual Husky installation in the demo repository, not by the analysis; not yet confirmed with <code>git status</code>. The fingerprint still describes the analysed files exactly.</p>
   </div>
 </section>
 

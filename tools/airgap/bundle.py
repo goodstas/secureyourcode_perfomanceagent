@@ -4,7 +4,8 @@
 Run this on a connected machine, then carry the bundle folder into the air-gapped environment and run
 `python tools/setup.py --mode airgapped --bundle <folder>` there. The bundle contains:
 
-  nuget/        every .nupkg the solution and the tools restore (a flat folder usable as a NuGet source)
+  nuget/        every .nupkg the solution and the tools restore (a flat folder usable as a NuGet source), restored
+                with AnalyzerTestHarness=Standalone, the analyzer-test setting air-gapped setup uses
   copilot-cli/  the Copilot runtime archives the GitHub.Copilot.SDK build downloads, in the release layout the SDK
                 expects (v<version>/github-copilot-<version>-<platform>.tgz + SHA256SUMS.txt), for the chosen platforms.
                 The SDK verifies each archive against SHA256SUMS.txt at build time, exactly as it does online.
@@ -74,7 +75,10 @@ def bundle_nuget(target: Path, sdk_version: str) -> list[Path]:
     print(f"\n== NuGet packages (GitHub.Copilot.SDK {sdk_version})", flush=True)
     target.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="syc-bundle-") as tmp:
-        env = dict(os.environ, DOTNET_CLI_TELEMETRY_OPTOUT="1", DOTNET_NOLOGO="1", NUGET_PACKAGES=tmp, CopilotSdkVersion=sdk_version)
+        # AnalyzerTestHarness=Standalone: the air-gapped side runs the analyzer tests without Microsoft.CodeAnalysis.Testing,
+        # which would also resolve reference assemblies from nuget.org at test time (Directory.Build.props).
+        env = dict(os.environ, DOTNET_CLI_TELEMETRY_OPTOUT="1", DOTNET_NOLOGO="1", NUGET_PACKAGES=tmp, CopilotSdkVersion=sdk_version,
+                   AnalyzerTestHarness="Standalone")
         for project in PROJECTS:
             # A fresh packages folder makes NuGet fetch every package, so nothing is missed because it was cached.
             run(["dotnet", "restore", project, "--packages", tmp, "--force"], env=env)
@@ -171,6 +175,7 @@ def main() -> None:
 
     manifest = {
         "copilotSdkVersion": args.sdk_version,
+        "analyzerTestHarness": "Standalone",
         "copilotCliVersion": COPILOT_CLI_VERSION,
         "copilotPlatforms": platforms,
         "graphifyVersion": None if args.skip_python else args.graphify_version,

@@ -1,5 +1,7 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using SecureYourCode.Agent.Graph;
+using SecureYourCode.Agent.Orchestration;
+using SecureYourCode.Agent.Reporting;
 
 namespace SecureYourCode.Agent.Tests;
 
@@ -110,8 +112,130 @@ public class FingerprintAndGraphTests
         Assert.Equal(1, extractor.MaxConcurrent);
     }
 
-    private static GraphifyUpdater Updater(TestEnvironment env, IGraphExtractor extractor) =>
-        new(env.Paths, extractor, NullLogger<GraphifyUpdater>.Instance);
+    // H8 audit: the 5-minute refresh limit and a missing Graphify must end as a failed refresh, never as an exception
+    // that fails /analyze with HTTP 500 or stops the background worker (and with it the host).
+    [Fact]
+    public async Task RefreshTimeout_EndsAsFailed_AndReleasesTheGate()
+    {
+        using var env = await new TestEnvironment().WithDemoRepoAsync();
+        var extractor = new FakeExtractor(ValidGraph, delay: TimeSpan.FromSeconds(30));
+        var updater = Updater(env, extractor, TimeSpan.FromMilliseconds(300));
+
+        var timedOut = await updater.RefreshAsync(CancellationToken.None);
+
+        Assert.Equal(GraphRefreshStatus.Failed, timedOut.Status);
+        Assert.StartsWith(GraphifyUpdater.TimeoutReason, timedOut.Reason);
+        AssertNothingPublished(env);
+
+        extractor.Delay = TimeSpan.Zero;
+        Assert.Equal(GraphRefreshStatus.Current, (await updater.RefreshAsync(CancellationToken.None)).Status);
+    }
+
+    [Fact]
+    public async Task WaitingForARunningRefresh_CountsTowardTheTimeout()
+    {
+        using var env = await new TestEnvironment().WithDemoRepoAsync();
+        var extractor = new BlockingExtractor();
+        var updater = Updater(env, extractor, TimeSpan.FromMilliseconds(500));
+        var first = updater.RefreshAsync(CancellationToken.None);
+        await extractor.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        var second = await updater.RefreshAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(GraphRefreshStatus.Failed, second.Status);
+        Assert.Contains("another graph refresh was still running", second.Reason);
+        extractor.Release.SetResult();
+        Assert.Equal(GraphRefreshStatus.Failed, (await first.WaitAsync(TimeSpan.FromSeconds(10))).Status);
+        AssertNothingPublished(env);
+    }
+
+    [Fact]
+    public async Task GraphifyNotInstalled_RefreshFails_WithoutThrowing()
+    {
+        using var env = await new TestEnvironment().WithDemoRepoAsync();
+        var extractor = new FakeExtractor(ValidGraph, versionError: new InvalidOperationException("No module named graphify"));
+
+        var result = await Updater(env, extractor).RefreshAsync(CancellationToken.None);
+
+        Assert.Equal(GraphRefreshStatus.Failed, result.Status);
+        Assert.Equal($"{GraphifyUpdater.FailedReason}: No module named graphify", result.Reason);
+        Assert.Equal(0, extractor.Calls);
+    }
+
+    [Fact]
+    public async Task Selector_GraphifyNotInstalled_IsNone_WithTheReason()
+    {
+        using var env = await new TestEnvironment().WithDemoRepoAsync();
+        var updater = Updater(env, new FakeExtractor(ValidGraph, versionError: new InvalidOperationException("No module named graphify")));
+
+        var selection = await new GraphSelector(updater, NullLogger<GraphSelector>.Instance).SelectAsync("fp", CancellationToken.None);
+
+        Assert.Equal((GraphStatuses.None, (PublishedGraph?)null), (selection.Status, selection.Graph));
+        Assert.Contains("No module named graphify", selection.Problem);
+    }
+
+    [Fact]
+    public async Task Selector_RefreshTimeout_UsesTheOlderGraphAsStale()
+    {
+        using var env = await new TestEnvironment().WithDemoRepoAsync();
+        var older = await Updater(env, new FakeExtractor(ValidGraph)).RefreshAsync(CancellationToken.None);
+        await File.AppendAllTextAsync(Path.Combine(env.RepoPath, "Program.cs"), "// a newer commit\n");
+        var fingerprint = await RepoFingerprint.ComputeAsync(env.RepoPath, CancellationToken.None);
+        var slow = Updater(env, new FakeExtractor(ValidGraph, delay: TimeSpan.FromSeconds(30)), TimeSpan.FromMilliseconds(300));
+
+        var selection = await new GraphSelector(slow, NullLogger<GraphSelector>.Instance).SelectAsync(fingerprint, CancellationToken.None);
+
+        Assert.Equal(GraphStatuses.Stale, selection.Status);
+        Assert.Equal(older.Fingerprint, selection.Graph!.Fingerprint);
+        Assert.Contains(GraphifyUpdater.TimeoutReason, selection.Problem);
+    }
+
+    [Fact]
+    public async Task Selector_CallerCancellation_StillThrows()
+    {
+        using var env = await new TestEnvironment().WithDemoRepoAsync();
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+        var selector = new GraphSelector(Updater(env, new FakeExtractor(ValidGraph)), NullLogger<GraphSelector>.Instance);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => selector.SelectAsync("fp", cancelled.Token));
+    }
+
+    [Fact]
+    public async Task BackgroundWorker_SurvivesARefreshTimeout()
+    {
+        using var env = await new TestEnvironment().WithDemoRepoAsync();
+        var extractor = new FakeExtractor(ValidGraph, delay: TimeSpan.FromSeconds(30));
+        var queue = new GraphRefreshQueue();
+        using var worker = new GraphRefreshWorker(queue, Updater(env, extractor, TimeSpan.FromMilliseconds(300)), NullLogger<GraphRefreshWorker>.Instance);
+        await worker.StartAsync(CancellationToken.None);
+        try
+        {
+            queue.Request();
+            await WaitUntilAsync(() => extractor.Calls == 1 && extractor.Active == 0);
+            extractor.Delay = TimeSpan.Zero;
+            queue.Request();
+            await WaitUntilAsync(() => File.Exists(Path.Combine(env.Paths.GraphsDirectory, "current.txt")));
+            Assert.False(worker.ExecuteTask!.IsCompleted);
+        }
+        finally
+        {
+            await worker.StopAsync(CancellationToken.None);
+        }
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(20);
+        while (!condition())
+        {
+            Assert.True(DateTime.UtcNow < deadline, "condition not reached within 20 s");
+            await Task.Delay(50);
+        }
+    }
+
+    private static GraphifyUpdater Updater(TestEnvironment env, IGraphExtractor extractor, TimeSpan? refreshTimeout = null) =>
+        new(env.Paths, extractor, NullLogger<GraphifyUpdater>.Instance) { RefreshTimeout = refreshTimeout ?? TimeSpan.FromMinutes(5) };
 
     private static string[] TempFolders(TestEnvironment env) =>
         Directory.Exists(env.Paths.GraphsDirectory) ? Directory.GetDirectories(env.Paths.GraphsDirectory, "tmp-*") : [];
@@ -123,7 +247,8 @@ public class FingerprintAndGraphTests
         Assert.Empty(Directory.Exists(env.Paths.GraphsDirectory) ? Directory.GetDirectories(env.Paths.GraphsDirectory) : []);
     }
 
-    private sealed class FakeExtractor(string graphJson, Action<string>? onExtract = null, TimeSpan delay = default) : IGraphExtractor
+    private sealed class FakeExtractor(string graphJson, Action<string>? onExtract = null, TimeSpan delay = default, Exception? versionError = null)
+        : IGraphExtractor
     {
         public const string Version = "0.0.0-test";
         private int _active;
@@ -132,7 +257,12 @@ public class FingerprintAndGraphTests
 
         public int MaxConcurrent { get; private set; }
 
-        public Task<string> GetVersionAsync(CancellationToken cancellationToken) => Task.FromResult(Version);
+        public int Active => Volatile.Read(ref _active);
+
+        public TimeSpan Delay { get; set; } = delay;
+
+        public Task<string> GetVersionAsync(CancellationToken cancellationToken) =>
+            versionError is null ? Task.FromResult(Version) : Task.FromException<string>(versionError);
 
         public async Task ExtractAsync(string repoPath, string outputDirectory, CancellationToken cancellationToken)
         {
@@ -140,7 +270,7 @@ public class FingerprintAndGraphTests
             try
             {
                 Calls++;
-                await Task.Delay(delay, cancellationToken);
+                await Task.Delay(Delay, cancellationToken);
                 onExtract?.Invoke(repoPath);
                 var graphFile = Path.Combine(outputDirectory, GraphStructure.GraphifyOutputRelativePath);
                 Directory.CreateDirectory(Path.GetDirectoryName(graphFile)!);
@@ -150,6 +280,22 @@ public class FingerprintAndGraphTests
             {
                 Interlocked.Decrement(ref _active);
             }
+        }
+    }
+
+    /// <summary>Holds the refresh gate until released, ignoring cancellation like a process that does not stop at once.</summary>
+    private sealed class BlockingExtractor : IGraphExtractor
+    {
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<string> GetVersionAsync(CancellationToken cancellationToken) => Task.FromResult(FakeExtractor.Version);
+
+        public async Task ExtractAsync(string repoPath, string outputDirectory, CancellationToken cancellationToken)
+        {
+            Entered.TrySetResult();
+            await Release.Task;
         }
     }
 }

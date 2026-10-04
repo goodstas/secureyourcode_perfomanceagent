@@ -25,19 +25,52 @@ public sealed record PublishedGraph(string Fingerprint, string GraphifyVersion, 
 public sealed class GraphifyUpdater(StatePaths paths, IGraphExtractor extractor, ILogger<GraphifyUpdater> logger)
 {
     public const string SourceChangedReason = "source_changed_during_graph_build";
+    public const string TimeoutReason = "graph_refresh_timeout";
+    public const string FailedReason = "graph_refresh_failed";
     private const string CurrentPointer = "current.txt";
-    private static readonly TimeSpan RefreshTimeout = TimeSpan.FromMinutes(5);
 
     private readonly SemaphoreSlim _gate = new(1, 1);
 
+    /// <summary>
+    /// The graph-refresh limit (plan §2: 5 min). It covers waiting for a refresh already in progress and this refresh,
+    /// so /analyze waits at most this long for its graph (plan §4.8 step 2).
+    /// </summary>
+    public TimeSpan RefreshTimeout { get; init; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// Refreshes the graph. Only the caller's cancellation throws; the time limit and every other problem (Graphify not
+    /// installed, a failed extraction) end as <see cref="GraphRefreshStatus.Failed"/> with a reason, so neither /analyze
+    /// nor the background worker is ever stopped by a graph problem.
+    /// </summary>
     public async Task<GraphRefreshResult> RefreshAsync(CancellationToken cancellationToken)
     {
-        await _gate.WaitAsync(cancellationToken);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(RefreshTimeout);
         try
         {
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeout.CancelAfter(RefreshTimeout);
+            await _gate.WaitAsync(timeout.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            logger.LogWarning("Graph refresh not started: another refresh was still running after {Timeout}", RefreshTimeout);
+            return GraphRefreshResult.Failed(null, $"{TimeoutReason}: another graph refresh was still running after {Minutes(RefreshTimeout)}");
+        }
+
+        try
+        {
             return await RefreshCoreAsync(timeout.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // The time limit, not the caller: the extraction's process tree has been stopped by ProcessRunner.
+            logger.LogWarning("Graph refresh stopped after {Timeout}", RefreshTimeout);
+            return GraphRefreshResult.Failed(null, $"{TimeoutReason}: the graph refresh did not finish within {Minutes(RefreshTimeout)}");
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // Before extraction: the Graphify version or the fingerprint could not be read (e.g. Graphify not installed).
+            logger.LogWarning(exception, "Graph refresh failed");
+            return GraphRefreshResult.Failed(null, $"{FailedReason}: {exception.Message}");
         }
         finally
         {
@@ -134,18 +167,30 @@ public sealed class GraphifyUpdater(StatePaths paths, IGraphExtractor extractor,
 
     private static string FolderName(string fingerprint, string version) => $"{fingerprint}-{version}";
 
-    private static void DeleteDirectory(string path)
+    private static string Minutes(TimeSpan span) => span.TotalMinutes >= 1
+        ? FormattableString.Invariant($"{span.TotalMinutes:0.#} min")
+        : FormattableString.Invariant($"{span.TotalSeconds:0.#} s");
+
+    /// <summary>Best effort: a leftover tmp-* folder is never read as a graph, so a locked file must not fail the refresh.</summary>
+    private void DeleteDirectory(string path)
     {
-        if (!Directory.Exists(path))
+        try
         {
-            return;
-        }
+            if (!Directory.Exists(path))
+            {
+                return;
+            }
 
-        foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
+            foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
+            {
+                File.SetAttributes(file, FileAttributes.Normal);
+            }
+
+            Directory.Delete(path, recursive: true);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            File.SetAttributes(file, FileAttributes.Normal);
+            logger.LogWarning(exception, "Could not delete the temporary graph folder {Folder}", path);
         }
-
-        Directory.Delete(path, recursive: true);
     }
 }

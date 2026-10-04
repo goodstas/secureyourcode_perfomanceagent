@@ -28,6 +28,7 @@ NuGet packages the build needs, which Artifactory must be able to serve (remote 
 | `xunit.runner.visualstudio` | 3.1.4 |
 | `coverlet.collector` | 6.0.4 |
 | `Husky` (a .NET tool, installed by the host at startup; optional with `"InstallGitHook": false`) | 0.9.1 |
+| `Microsoft.CodeAnalysis.CSharp.Analyzer.Testing` and `Microsoft.CodeAnalysis.CSharp.Workspaces` (analyzer tests, default harness only) | 1.1.4 and 5.0.0, with their dependencies (`DiffPlex`, `NuGet.*`, `Microsoft.VisualStudio.Composition`). Not needed with step 1b |
 
 ## 1. NuGet: point everything at Artifactory
 
@@ -49,6 +50,16 @@ The projects reference the SDK through one build property, `CopilotSdkVersion`, 
 | `CopilotSdkVersion` | `1.0.13` |
 
 MSBuild reads it as a property, so Visual Studio and `dotnet build` both pick it up (restart them after setting it). SDK 1.0.13 was verified with the host: it builds, all tests pass, and ApiKey mode runs over the CLI binary. It pins Copilot CLI 1.0.83 for its own download, but with step 2 it uses the CLI you point it at (1.0.76, 1.0.83 and 1.0.89 verified).
+
+## 1b. Analyzer tests without Microsoft.CodeAnalysis.Testing
+
+The analyzer tests use `Microsoft.CodeAnalysis.CSharp.Analyzer.Testing` by default, as the plan requires. That framework needs packages your feed may not carry, and it also downloads reference assemblies from nuget.org when the tests run. On the air-gapped PC, switch the test project to the self-contained harness with one more **user environment variable**:
+
+| Variable | Value |
+|---|---|
+| `AnalyzerTestHarness` | `Standalone` |
+
+Same tests, same markup, no extra packages: the test project then references only `Microsoft.CodeAnalysis.CSharp` 5.0.0. Restart Visual Studio or the terminal after setting it. You no longer need to remove the test project or its packages by hand.
 
 ## 2. The Copilot runtime: use your installed CLI
 
@@ -221,6 +232,7 @@ The full demo walkthrough is `demo\DEMO.md`. The report's provenance section sho
 | `Authentication failed with provider at <url> (HTTP 401)` | wrong key, or the endpoint expects the key in a different header. Try `"UseBearerToken": false` in the Provider section to send it as an API-key header instead of `Authorization: Bearer` |
 | `SDK protocol version mismatch` | the CLI binary is too old or too new for the SDK. 1.0.76, 1.0.83 and 1.0.89 are verified with SDK 1.0.13 and 1.0.15 |
 | restore: `Unable to find package GitHub.Copilot.SDK with version (= 1.0.15)` | the feed has only 1.0.13: step 1a |
+| restore `NU1101`/`NU1102` for `Microsoft.CodeAnalysis.CSharp.Analyzer.Testing`, `DiffPlex` or `NuGet.*` | the feed lacks the analyzer test framework: step 1b |
 | `The SecureYourCode analyzer is not built: ... is missing` | step 3, Release build of `SecureYourCode.PerformanceAnalyzer` |
 | `graphify extract failed` or `Could not read the installed graphifyy version` | step 4: the venv is missing, or `Graphify:Python`/`Graphify:Cli` point to the wrong files (set both or neither) |
 | `/analyze` → run status `failed`, reason `orchestration_failed` | the engine could not complete a reviewer session; the report's reviewer section and the host log carry the endpoint's error. Baseline analyzer findings are still reported |
@@ -235,3 +247,4 @@ The full demo walkthrough is `demo\DEMO.md`. The report's provenance section sho
 | The API key | `SECUREYOURCODE_LLM_API_KEY` or the `ApiKeyFile` you named, never the repository |
 | Build-time runtime choice | the `CopilotCliBinaryPath` variable |
 | Build-time SDK version choice | the `CopilotSdkVersion` variable (default 1.0.15) |
+| Analyzer test harness | the `AnalyzerTestHarness` variable (default `Testing`, `Standalone` on the air-gapped PC) |

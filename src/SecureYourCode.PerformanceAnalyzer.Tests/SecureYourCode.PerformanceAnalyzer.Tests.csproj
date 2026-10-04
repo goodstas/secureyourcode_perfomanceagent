@@ -9,13 +9,30 @@
 
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="6.0.4" />
-    <!-- Same Roslyn version as the analyzer (H0). The Microsoft.CodeAnalysis.Testing framework is not used (H8): its
-         transitive packages are not on every air-gapped feed; Verify.cs is a small self-contained harness instead. -->
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.0.0" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
   </ItemGroup>
+
+  <!-- AnalyzerTestHarness (Directory.Build.props): Testing is the plan's framework (§4.3); Standalone is the air-gapped
+       alternative on Roslyn alone. Both use the same Roslyn version as the analyzer. -->
+  <ItemGroup Condition="'$(AnalyzerTestHarness)' == 'Testing'">
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Analyzer.Testing" Version="1.1.4" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="5.0.0" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(AnalyzerTestHarness)' == 'Standalone'">
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.0.0" />
+  </ItemGroup>
+
+  <PropertyGroup Condition="'$(AnalyzerTestHarness)' == 'Standalone'">
+    <DefineConstants>$(DefineConstants);STANDALONE_ANALYZER_HARNESS</DefineConstants>
+  </PropertyGroup>
+
+  <Target Name="CheckAnalyzerTestHarness" BeforeTargets="CollectPackageReferences;CoreCompile">
+    <Error Condition="'$(AnalyzerTestHarness)' != 'Testing' And '$(AnalyzerTestHarness)' != 'Standalone'"
+           Text="AnalyzerTestHarness must be Testing or Standalone, not '$(AnalyzerTestHarness)' (see Directory.Build.props)." />
+  </Target>
 
   <ItemGroup>
     <Using Include="Xunit" />

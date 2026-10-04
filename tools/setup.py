@@ -31,6 +31,10 @@ Usage:
   python tools/setup.py --mode airgapped --nuget-source <url> --pip-index-url <url> --copilot-npm-registry <url>
   python tools/setup.py --mode airgapped ... --sdk-version 1.0.13      # when the feed carries only that SDK version
   python tools/setup.py --mode airgapped --bundle <dir> --graphify-python <python> --graphify-cli <graphify>
+
+Analyzer tests: online mode uses Microsoft.CodeAnalysis.CSharp.Analyzer.Testing (plan §4.3); air-gapped mode uses the
+self-contained harness (AnalyzerTestHarness=Standalone in Directory.Build.props), because the testing framework's packages
+are often not on an internal feed. --analyzer-test-harness overrides either default.
 """
 from __future__ import annotations
 
@@ -184,9 +188,10 @@ def setup_graphify(root: Path, version: str, sources: Sources, python_override: 
 
 
 class Pins:
-    """The SDK version in use and the CLI version it pins; set from --sdk-version in main()."""
+    """The SDK version in use and the CLI version it pins (--sdk-version), and the analyzer test harness; set in main()."""
     sdk = SDK_VERSION
     cli = COPILOT_CLI_VERSION
+    analyzer_test_harness = "Testing"
 
 
 def copilot_cli(root: Path) -> Path:
@@ -275,12 +280,13 @@ class LocalMirror:
 
 
 def dotnet_env() -> dict[str, str]:
-    # MSBuild reads environment variables as properties: this selects the GitHub.Copilot.SDK version (Directory.Build.props).
-    return dict(os.environ, **DOTNET_ENV, CopilotSdkVersion=Pins.sdk)
+    # MSBuild reads environment variables as properties: these select the GitHub.Copilot.SDK version and the analyzer
+    # test harness (Directory.Build.props).
+    return dict(os.environ, **DOTNET_ENV, CopilotSdkVersion=Pins.sdk, AnalyzerTestHarness=Pins.analyzer_test_harness)
 
 
 def build_and_test(sources: Sources, cli_binary: Path | None) -> None:
-    step(f"Build and test the solution (GitHub.Copilot.SDK {Pins.sdk})")
+    step(f"Build and test the solution (GitHub.Copilot.SDK {Pins.sdk}, analyzer test harness {Pins.analyzer_test_harness})")
     dotnet = tool("dotnet")
     env = dotnet_env()
     if cli_binary is not None:
@@ -375,6 +381,9 @@ def main() -> None:
     parser.add_argument("--graphify-version", default=GRAPHIFY_VERSION, help=f"graphifyy version to install (default {GRAPHIFY_VERSION})")
     parser.add_argument("--graphify-python", help="use an existing interpreter that has graphifyy[mcp] (with --graphify-cli)")
     parser.add_argument("--graphify-cli", help="the graphify executable of that installation")
+    parser.add_argument("--analyzer-test-harness", choices=["Testing", "Standalone"],
+                        help="analyzer tests: Testing (Microsoft.CodeAnalysis.CSharp.Analyzer.Testing, default online) or "
+                        "Standalone (Roslyn only, default air-gapped)")
     parser.add_argument("--login", action="store_true", help="online: run the interactive Copilot sign-in")
     parser.add_argument("--check-model", action="store_true", help="send one short prompt through the configured backend")
     args = parser.parse_args()
@@ -382,6 +391,7 @@ def main() -> None:
         parser.error("--login needs --mode online (ApiKey mode has no sign-in)")
 
     Pins.sdk, Pins.cli = args.sdk_version, SDK_VERSIONS[args.sdk_version]
+    Pins.analyzer_test_harness = args.analyzer_test_harness or ("Testing" if args.mode == "online" else "Standalone")
     sources = Sources(args)
     root = state_root()
     print(f"Repository: {REPO}\nStateRoot:  {root}\nMode:       {args.mode}\nSDK:        GitHub.Copilot.SDK {Pins.sdk} (Copilot CLI {Pins.cli})")
@@ -411,6 +421,9 @@ def main() -> None:
         print("  so the host can install the Husky.Net hook tool into the demo repo without nuget.org.")
     if Pins.sdk != SDK_VERSION:
         print(f"  Set the environment variable CopilotSdkVersion permanently to {Pins.sdk} so that every later dotnet build uses that SDK.")
+    if Pins.analyzer_test_harness != "Testing":
+        print(f"  Set the environment variable AnalyzerTestHarness permanently to {Pins.analyzer_test_harness} so that every later")
+        print("  dotnet build/test (and Visual Studio) restores the analyzer tests without Microsoft.CodeAnalysis.Testing.")
     if cli_binary is not None:
         print(f"  Set the environment variable CopilotCliBinaryPath permanently to {cli_binary}")
         print("  so that every later dotnet build/run uses this Copilot runtime instead of downloading the release archive.")

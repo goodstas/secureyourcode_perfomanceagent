@@ -8,4 +8,17 @@
   <PropertyGroup>
     <CopilotSdkVersion Condition="'$(CopilotSdkVersion)' == ''">1.0.15</CopilotSdkVersion>
   </PropertyGroup>
+
+  <!--
+    How the analyzer tests run (plan §4.3, restored after the H8 audit):
+      Testing     (default) Microsoft.CodeAnalysis.CSharp.Analyzer.Testing, as the plan requires. Needs its packages
+                  (DiffPlex, NuGet.*, Microsoft.VisualStudio.Composition, ...) on the NuGet source, and it resolves
+                  Microsoft.NETCore.App.Ref 8.0.0 from NuGet when the tests run.
+      Standalone  a self-contained harness on Roslyn alone, for an air-gapped feed without those packages. Same markup,
+                  same tests. Select it with -p:AnalyzerTestHarness=Standalone or the environment variable
+                  AnalyzerTestHarness=Standalone (tools/setup.py does this in air-gapped mode).
+  -->
+  <PropertyGroup>
+    <AnalyzerTestHarness Condition="'$(AnalyzerTestHarness)' == ''">Testing</AnalyzerTestHarness>
+  </PropertyGroup>
 </Project>
